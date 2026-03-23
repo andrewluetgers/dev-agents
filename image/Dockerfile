@@ -1,11 +1,15 @@
 # Dev container for AI coding agents
-# Isolated Node.js environment for autonomous AI agent workstations
+# Isolated environment for autonomous AI agent workstations
+#
+# Two modes (same image):
+#   Worker (default):       bun /opt/agent/server.ts
+#   Orchestrator (override): bun /opt/agent/channel.ts
 #
 # Each agent gets its own home directory mounted from the host:
 #   ~/dev-agents/<agent-id> → /home/agent
 #
-# The command server lives at /opt/agent-server/ so host mounts
-# don't clobber it.
+# All agent infrastructure lives at /opt/agent/ so host mounts
+# on /home/agent don't clobber it.
 #
 # Designed for Docker Desktop Enhanced Container Isolation (ECI):
 #   - Runs as non-root 'agent' user (UID matches host via AGENT_UID build arg)
@@ -18,38 +22,44 @@ FROM node:22-slim
 # Place your cert at image/ca-cert.crt before building. If absent, this is a no-op.
 COPY ca-cert.cr[t] /usr/local/share/ca-certificates/custom-ca.crt
 
-# Dev tools + CA trust store update
+# Dev tools + Docker CLI (orchestrator needs it to spawn sibling containers)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
     procps \
     sudo \
     ca-certificates \
+    docker.io \
   && rm -rf /var/lib/apt/lists/* \
   && update-ca-certificates
 
-# Set CA env if a custom cert was added
-RUN [ -f /usr/local/share/ca-certificates/custom-ca.crt ] \
-  && echo 'export NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/custom-ca.crt' >> /etc/profile.d/custom-ca.sh \
-  || true
+# Set CA env immediately so all subsequent npm/bun installs trust the proxy
+ENV NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/custom-ca.crt
 
-# pnpm
+# Bun — primary runtime for agent infrastructure
+RUN npm install -g bun
+
+# pnpm — for project work inside the container
 ARG PNPM_VERSION=10.30.3
 RUN npm install -g pnpm@${PNPM_VERSION}
 
 # Non-root user — UID should match host user for bind mount permissions
 ARG AGENT_UID=1000
 RUN useradd -m -s /bin/bash -u ${AGENT_UID} agent \
-  && echo "agent ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+  && echo "agent ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers \
+  && usermod -aG docker agent 2>/dev/null || true
 
-# Command server (lives outside /home/agent so host mounts don't clobber it)
-COPY package.json server.js /opt/agent-server/
-RUN cd /opt/agent-server && npm install --omit=dev 2>/dev/null; true \
-  && chown -R agent:agent /opt/agent-server
+# Agent infrastructure — server + channel + shared deps in one directory
+COPY server.ts /opt/agent/server.ts
+COPY channel/agent-channel.ts /opt/agent/agent-channel.ts
+COPY channel/package.json /opt/agent/package.json
+RUN cd /opt/agent && bun install \
+  && chown -R agent:agent /opt/agent
 
 USER agent
 WORKDIR /home/agent/workspace
 
-EXPOSE 9111
+EXPOSE 9111 9222 8788
 
-CMD ["node", "/opt/agent-server/server.js"]
+# Default: worker mode
+CMD ["bun", "/opt/agent/server.ts"]

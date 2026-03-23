@@ -1,8 +1,19 @@
 {
   "mcpServers": {
     "agent": {
-      "command": "bun",
-      "args": ["./channel/agent-channel.ts"]
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "--name", "dev-orchestrator",
+        "-v", "/var/run/docker.sock:/var/run/docker.sock",
+        "-v", "~/dev-agents/orchestrator:/home/agent",
+        "-v", "~/dev-agents/shared:/home/agent/shared:ro",
+        "-p", "8788:8788",
+        "--add-host", "host.docker.internal:host-gateway",
+        "-e", "ORCHESTRATOR_HOME=/home/agent",
+        "dev-agent:latest",
+        "bun", "/opt/agent-channel/agent-channel.ts"
+      ]
     }
   }
 }
