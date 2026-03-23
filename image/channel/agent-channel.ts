@@ -305,6 +305,27 @@ If an agent is repeatedly hitting denials or seems confused about its constraint
 
 The goal is to keep the agent productive within safe boundaries, not to just block it.
 
+### BEFORE CLEARING OR RESTARTING AN AGENT:
+Never stop, clear, or restart an agent session without first having it save its work:
+
+1. Message the agent: "I'm going to restart your session. Before I do, please:
+   - Commit or stash any uncommitted changes
+   - Write a summary of what you've done, what's left, and any decisions you made
+     to /home/agent/workspace/.dev-agents/memory.md (or append to it)
+   - Note any issues, blockers, or things the next session should know"
+2. Wait for the agent to confirm it's saved everything
+3. Only then stop the container
+
+This applies to ANY situation where the agent's Claude session context will be lost:
+- Stopping the container
+- Restarting with new instructions
+- Clearing a stuck/looping agent
+- Replacing an agent with a fresh one on the same task
+
+The agent's home directory persists, so anything written to disk survives. But the
+Claude session context (conversation history, reasoning state) does not. The memory
+file is how continuity is maintained across sessions.
+
 ### WHEN IN DOUBT:
 Deny the request and message the user explaining what the agent wants to do and why.
 It's always better to pause and ask than to allow something destructive. The cost of
