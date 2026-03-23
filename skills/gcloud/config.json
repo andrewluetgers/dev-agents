@@ -1,0 +1,19 @@
+{
+  "env": {
+    "GCP_PROJECT": "wsi-1-480715",
+    "GCP_REGION": "us-central1",
+    "GCS_IMAGE_BUCKET": "cohort-search-n-cs-glorious-ocelot",
+    "GCS_IMAGE_PATH": "20260112_mayosh_benchmark_v2_40k_thumbnails"
+  },
+  "auth": {
+    "check": "gcloud auth print-access-token >/dev/null 2>&1",
+    "login": "gcloud auth login && gcloud auth application-default login",
+    "tokenPath": "~/.config/gcloud",
+    "note": "ADC tokens expire periodically. Re-run login if GCS or API calls fail with auth errors."
+  },
+  "permissions": {
+    "read": ["storage", "cloud-run", "compute", "sql", "logging"],
+    "write": ["storage", "cloud-run"],
+    "note": "Can read most resources. Write limited to storage and Cloud Run deployments."
+  }
+}

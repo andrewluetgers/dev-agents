@@ -1,0 +1,62 @@
+{
+  "env": {
+    "ADO_ORG": "mclm",
+    "ADO_PROJECT": "GenAI Digipath",
+    "ADO_AREA_PATH": "GenAI Digipath\\Projects\\SearchApp",
+    "ADO_ITERATION_PATH": "GenAI Digipath\\Search App Pilot\\Baseline Substrate Freeze",
+    "ADO_API_RESOURCE": "499b84ac-1321-427f-aa17-267ca6975798"
+  },
+  "auth": {
+    "check": "az account show",
+    "login": "az login",
+    "tokenPath": "~/.azure",
+    "pathSetup": "export PATH=\"$PATH:$HOME/Library/Python/3.9/bin\""
+  },
+  "permissions": {
+    "read": {
+      "scope": "project",
+      "note": "Can read any work item in the project"
+    },
+    "write": {
+      "scope": "assigned",
+      "note": "Can only modify work items assigned to @me",
+      "allowedFields": [
+        "System.State",
+        "System.AssignedTo",
+        "System.Title",
+        "System.Description",
+        "System.Tags",
+        "Microsoft.VSTS.Common.Priority",
+        "Microsoft.VSTS.Common.Severity",
+        "Microsoft.VSTS.Common.Risk",
+        "Microsoft.VSTS.Scheduling.Size",
+        "Microsoft.VSTS.Common.AcceptanceCriteria",
+        "Microsoft.VSTS.Common.ValueArea"
+      ],
+      "allowedStateTransitions": {
+        "New": ["Active", "Removed"],
+        "Active": ["Resolved", "Closed", "Removed"],
+        "Resolved": ["Active", "Closed"],
+        "Closed": ["Active"]
+      }
+    },
+    "create": {
+      "allowedTypes": ["User Story", "Task", "Bug", "Issue"],
+      "note": "Can create new work items. Always set AreaPath and IterationPath from config."
+    },
+    "relations": {
+      "allowed": [
+        "System.LinkTypes.Hierarchy-Forward",
+        "System.LinkTypes.Hierarchy-Reverse",
+        "System.LinkTypes.Related",
+        "System.LinkTypes.Duplicate-Forward",
+        "System.LinkTypes.Duplicate-Reverse"
+      ],
+      "note": "Can add parent/child, related, and duplicate links"
+    },
+    "delete": {
+      "allowed": false,
+      "note": "Never delete. Use state Removed or Closed instead."
+    }
+  }
+}

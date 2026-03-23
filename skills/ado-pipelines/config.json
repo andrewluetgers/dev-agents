@@ -1,0 +1,20 @@
+{
+  "env": {
+    "ADO_ORG": "mclm",
+    "ADO_PROJECT": "GenAI Digipath",
+    "ADO_API_RESOURCE": "499b84ac-1321-427f-aa17-267ca6975798"
+  },
+  "auth": {
+    "check": "az account show",
+    "login": "az login",
+    "tokenPath": "~/.azure",
+    "pathSetup": "export PATH=\"$PATH:$HOME/Library/Python/3.9/bin\""
+  },
+  "pipelines": {
+    "cohort-search-caf": {
+      "description": "Cohort Search deployment via CAF (Terraform + Cloud Run)",
+      "autoApprove": false,
+      "branches": ["develop", "main"]
+    }
+  }
+}
