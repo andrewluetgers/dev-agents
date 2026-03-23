@@ -224,6 +224,7 @@ Events arrive as <channel source="agent" agent="<id>" type="<type>"> tags:
 - type="error": agent hit a problem
 - type="prompt": agent is asking you a question
 - type="request": agent is requesting a shared resource (skill, template, or data)
+- type="permission_request": agent needs approval to use a tool (URGENT — agent is blocked waiting)
 
 Tools:
 - spawn_agent: create a new agent container with its own persistent home directory
@@ -231,7 +232,17 @@ Tools:
 - dispatch: run a command in an agent container
 - message: push a message directly into an agent's Claude Code session (low latency, no polling)
 - reply: respond to an agent's prompt (unblocks a pending /ask call)
+- approve: approve a pending permission request from an agent
+- deny: deny a pending permission request from an agent
 - list_agents: show all agents
+
+PERMISSION REQUESTS are time-sensitive. When you see a permission_request event, the agent is
+blocked and waiting. Review the tool_name, description, and input_preview, then call approve
+or deny promptly. The event content contains a human-readable description. The permission
+field in the event metadata has the request_id you need for approve/deny.
+
+Common approvals: Bash commands for builds/tests/git, file reads, file writes to workspace.
+Common denials: deleting files outside workspace, destructive git operations, unknown commands.
 
 Use "message" to give agents new instructions, corrections, or context mid-task.
 Use "dispatch" to run shell commands in the agent's container.
@@ -320,6 +331,42 @@ const tools = [
     },
   },
   {
+    name: "approve",
+    description:
+      "Approve a pending permission request from an agent. The agent is blocked waiting — respond promptly.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        agent: { type: "string", description: "Agent ID" },
+        request_id: {
+          type: "string",
+          description: "The request_id from the permission_request event",
+        },
+      },
+      required: ["agent", "request_id"],
+    },
+  },
+  {
+    name: "deny",
+    description:
+      "Deny a pending permission request from an agent. The agent is blocked waiting — respond promptly.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        agent: { type: "string", description: "Agent ID" },
+        request_id: {
+          type: "string",
+          description: "The request_id from the permission_request event",
+        },
+        reason: {
+          type: "string",
+          description: "Why the request was denied (sent to the agent)",
+        },
+      },
+      required: ["agent", "request_id"],
+    },
+  },
+  {
     name: "list_agents",
     description: "List all agents with their IDs, ports, projects, and status.",
     inputSchema: {
@@ -404,11 +451,52 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         return text(`Reply delivered: ${JSON.stringify(await resp.json())}`);
       }
 
+      case "approve": {
+        const info = agents.get(a.agent);
+        if (!info) return text(`Agent "${a.agent}" not found.`);
+        try {
+          const resp = await fetch(`http://localhost:${info.hostPort}/permission`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ request_id: a.request_id, verdict: "allow" }),
+          });
+          const result = await resp.json();
+          return text(`Approved ${a.request_id} for ${a.agent}: ${JSON.stringify(result)}`);
+        } catch (err: any) {
+          return text(`Failed to deliver approval to ${a.agent}: ${err.message}`);
+        }
+      }
+
+      case "deny": {
+        const info = agents.get(a.agent);
+        if (!info) return text(`Agent "${a.agent}" not found.`);
+        try {
+          const resp = await fetch(`http://localhost:${info.hostPort}/permission`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ request_id: a.request_id, verdict: "deny" }),
+          });
+          const result = await resp.json();
+          // Also message the agent with the reason
+          if (a.reason && info.channelPort) {
+            await fetch(`http://localhost:${info.channelPort}/message`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ content: `Permission denied: ${a.reason}`, from: "orchestrator" }),
+            }).catch(() => {});
+          }
+          return text(`Denied ${a.request_id} for ${a.agent}: ${JSON.stringify(result)}`);
+        } catch (err: any) {
+          return text(`Failed to deliver denial to ${a.agent}: ${err.message}`);
+        }
+      }
+
       case "list_agents": {
         if (agents.size === 0) return text("No agents running.");
         const list = [...agents.entries()].map(([id, info]) => ({
           id,
           port: info.hostPort,
+          channelPort: info.channelPort,
           home: info.homeDir,
           project: info.project,
           status: info.status,
