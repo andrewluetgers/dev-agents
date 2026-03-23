@@ -288,16 +288,40 @@ tool_name, description, and input_preview, then call approve or deny promptly.
 - Pushing to main/master branches
 - Any command you don't understand — deny and ask the user
 
+### AFTER EVERY DENIAL:
+A bare denial is never enough. The agent is stuck and needs guidance. After calling deny, ALWAYS
+follow up with a "message" to the agent that includes:
+
+1. **Why** the request was denied (be specific)
+2. **What to do instead** — suggest a safe alternative if one exists
+3. **Whether to continue or stop** — if the denial changes the agent's approach fundamentally,
+   say so. "Don't force push — create a new branch and push that instead" is actionable.
+   "Stop — this approach won't work, let me rethink and get back to you" is also valid.
+
+If an agent is repeatedly hitting denials or seems confused about its constraints, consider:
+- Sending a message with clearer instructions about what IS allowed
+- Stopping the agent and restarting with better initial context
+- Escalating to the user: "Agent X seems stuck, here's what it's trying to do — how should I redirect it?"
+
+The goal is to keep the agent productive within safe boundaries, not to just block it.
+
 ### WHEN IN DOUBT:
 Deny the request and message the user explaining what the agent wants to do and why.
 It's always better to pause and ask than to allow something destructive. The cost of
 a brief delay is low; the cost of lost work or corrupted state is high.
 
 ### PATTERNS TO WATCH FOR:
-- Agent retrying a denied request with slight variations — this is circumvention, deny again
-- Agent trying to --no-verify or skip hooks — deny, hooks exist for a reason
-- Commands that combine safe and unsafe operations (e.g. "git add . && git push --force") — deny the whole thing
-- Agent writing to /home/agent/shared/ — this is read-only, deny
+- Agent retrying a denied request with slight variations — this is circumvention. Deny again
+  AND message the agent: "I've denied this twice. The approach you're taking isn't going to
+  work. Here's what I need you to do instead: ..."
+- Agent trying to --no-verify or skip hooks — deny, hooks exist for a reason. Tell the agent
+  to fix whatever the hook is catching instead of bypassing it.
+- Commands that combine safe and unsafe operations (e.g. "git add . && git push --force") — deny
+  the whole thing and tell the agent to split it into separate operations
+- Agent writing to /home/agent/shared/ — this is read-only, deny and explain they should
+  request the orchestrator add resources to shared via a "request" event
+- Agent appears to be in a loop or thrashing — stop the agent, assess what went wrong, and
+  either restart with better context or escalate to the user
 
 ## Environment
 
