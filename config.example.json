@@ -1,0 +1,19 @@
+{
+  "agentImage": "dev-agent:latest",
+  "homesDir": "~/dev-agents",
+  "channelPort": 8788,
+  "defaults": {
+    "memory": "4g",
+    "agentUid": 1000
+  },
+  "projects": {
+    "my-project": {
+      "repo": "https://github.com/you/my-project.git",
+      "localPath": "/path/to/my-project",
+      "env": [".env"],
+      "data": {
+        "datasets": "/path/to/shared/datasets"
+      }
+    }
+  }
+}
