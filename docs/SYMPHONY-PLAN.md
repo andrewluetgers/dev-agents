@@ -1,16 +1,114 @@
 # Symphony Implementation Plan
 
-Implementing OpenAI's Symphony spec on top of our existing dev-agents orchestration system, adapted for Azure DevOps and Claude Code.
+Implementing OpenAI's Symphony spec on top of our existing dev-agents orchestration system, adapted for Azure DevOps and Claude Code. Incorporates harness engineering patterns from OpenAI's production methodology.
 
 ## What We're Building
 
 A long-running orchestration service that:
 1. Polls an ADO agent sprint for work items
 2. Spawns isolated agent containers for each item
-3. Monitors progress with stall detection and reconciliation
-4. Retries failed work with exponential backoff
-5. Maintains bidirectional communication with agents (our addition beyond Symphony)
-6. Reports results back to ADO and notifies the user
+3. Guides agents through structured execution phases (research → plan → execute → verify)
+4. Monitors progress with stall detection and reconciliation
+5. Retries failed work with exponential backoff
+6. Enforces deterministic quality gates before marking work complete
+7. Maintains bidirectional communication with agents (our addition beyond Symphony)
+8. Reports results back to ADO and notifies the user
+9. Improves the harness when agents struggle (the meta-loop)
+
+## Harness Engineering Principles
+
+These principles govern how the system operates. They're drawn from OpenAI's harness engineering methodology and adapted for our context.
+
+### 1. Documentation is the Table of Contents, Not the Encyclopedia
+
+The agent's system prompt should be a **short map with pointers**, not a dump of everything. The WORKFLOW.md prompt template points agents to deeper sources:
+- `CLAUDE.md` for code conventions and golden principles
+- `docs/` for architecture and design decisions
+- `.dev-agents/memory.md` for project context and gotchas
+- The code itself for the current state of things
+
+### 2. Golden Principles are Enforced, Not Suggested
+
+Each repo's CLAUDE.md encodes opinionated, mechanical rules. These are **non-negotiable constraints** for agents, not guidelines:
+- No fallbacks — let it fail, fix the root cause
+- No N+1 queries — always use JOINs
+- No backwards compatibility — clean up old code
+- Use the typed SDK (oRPC, Drizzle, Zod v4) — don't guess at shapes
+- Generate UUIDs in TypeScript, not in the database
+
+These survive because they're checked by deterministic gates (typecheck, lint, tests).
+
+### 3. Code Design is Context
+
+Well-structured code reduces the need for documentation. When the agent reads well-named functions, clear types, and consistent patterns, it doesn't need lengthy explanations. Invest in code quality to improve agent quality.
+
+### 4. Deterministic Gates Before LLM Evaluation
+
+Not everything needs AI judgment. Use hard, deterministic checks first:
+- `pnpm typecheck` — types correct? (machine says yes/no)
+- `pnpm test` — tests pass? (machine says yes/no)
+- `pnpm lint` — style consistent? (machine says yes/no)
+- `git status --porcelain` — workspace clean? (machine says yes/no)
+
+Only after all gates pass does the orchestrator (LLM) evaluate the work.
+
+### 5. Structured Execution Phases
+
+Agents don't just "implement the feature." They work through phases with clear gates between them. **Phases 2 and 3 are interactive touch points** where the orchestrator (representing the user) actively participates.
+
+```
+Phase 1: Research (agent solo)
+  - Read the relevant code, docs, and tests
+  - Understand the existing patterns
+  - Output: understanding, no code changes
+
+Phase 2: Plan ★ INTERACTIVE — key touch point
+  - Agent proposes a plan to the orchestrator
+  - Orchestrator reviews, may relay to user for input
+  - Back-and-forth until approach is agreed
+  - Plan is NOT fire-and-forget — expect iteration
+  - Output: approved plan
+
+Phase 3: Execute ★ INTERACTIVE for hard decisions
+  - Implement in small, focused commits
+  - Follow golden principles from CLAUDE.md
+  - Pause at hard engineering tradeoffs and consult orchestrator
+  - "Two reasonable approaches exist" = ask, don't guess
+  - Output: working code with tests
+
+Phase 4: Verify (agent solo, deterministic)
+  - Run all deterministic gates
+  - Fix any failures
+  - Output: all gates green
+
+Phase 5: Deliver (agent solo)
+  - Push feature branch
+  - Create PR referencing the work item
+  - Update ADO work item
+  - Output: PR ready for review
+```
+
+The interactive phases are where value is created. Research, verify, and deliver are mechanical — any agent can do them. Planning well and making the right engineering tradeoffs require collaboration. The orchestrator's job is to facilitate this, either by answering from its own context or by escalating to the user.
+
+### 6. Entropy Management (The Meta-Loop)
+
+When agents struggle, treat it as a signal. The orchestrator should:
+- Track failure patterns across agents and issues
+- Update `.dev-agents/memory.md` with new gotchas
+- Update `CLAUDE.md` if agents keep violating a convention
+- Update `WORKFLOW.md` if the prompt template needs better guidance
+- Update shared skills if a common operation keeps failing
+
+This is the **meta-loop** — the system improves itself over time.
+
+### 7. Depth-First, Not Breadth-First
+
+Break goals into building blocks. Don't dispatch "implement the whole feature." Dispatch:
+1. "Research the auth system and write a plan"
+2. (Review plan) "Implement the plan"
+3. "Verify and deliver"
+
+Each step validates before the next begins. The orchestrator manages the progression.
 
 ## What We Already Have
 
@@ -48,7 +146,7 @@ A long-running orchestration service that:
 
 **Goal**: Per-project workflow file that defines how agents handle work items.
 
-Adapting Symphony's WORKFLOW.md pattern for our system. Lives in each repo at `.dev-agents/WORKFLOW.md`:
+Adapting Symphony's WORKFLOW.md pattern. Lives in each repo at `.dev-agents/WORKFLOW.md`:
 
 ```yaml
 ---
@@ -72,45 +170,80 @@ agent:
   max_retry_backoff_ms: 300000
   stall_timeout_ms: 300000
 
+gates:
+  - pnpm typecheck
+  - pnpm test
+  - pnpm lint
+
 hooks:
   after_create: |
     git clone $REPO_URL .
-    git checkout $BRANCH
+    git checkout develop
     pnpm install
   before_run: |
     git pull --ff-only
     pnpm install --frozen-lockfile
 ---
 
-You are a coding agent working on the {{issue.identifier}} work item:
+You are a coding agent working on work item {{issue.identifier}}.
 
-**Title**: {{issue.title}}
-**Description**: {{issue.description}}
-**Acceptance Criteria**: {{issue.acceptance_criteria}}
-**Priority**: {{issue.priority}}
+## Context
 
-{% if attempt %}
-This is retry attempt {{attempt}}. Review what was done previously
-in the workspace and continue from where the last session left off.
-Check .dev-agents/memory.md for notes from the previous session.
+Read these before starting:
+- `CLAUDE.md` — code conventions and golden principles (FOLLOW THESE)
+- `.dev-agents/memory.md` — project context, architecture, gotchas
+- `docs/ARCHITECTURE-SUMMARY.md` — system design overview
+
+## Your Assignment
+
+**{{issue.title}}**
+
+{{issue.description}}
+
+{% if issue.acceptance_criteria %}
+**Acceptance Criteria:**
+{{issue.acceptance_criteria}}
 {% endif %}
 
-## Your task
+{% if attempt %}
+This is attempt {{attempt}}. Check the workspace for previous work.
+Read `.dev-agents/memory.md` for notes from prior sessions.
+Continue from where the last session left off — don't start over.
+{% endif %}
 
-Implement the work described above. Follow the project's CLAUDE.md conventions.
+## Execution Phases
 
-## When you're done
+Work through these in order. Complete each phase before moving to the next.
 
-1. Ensure all tests pass: `pnpm test`
-2. Ensure types check: `pnpm typecheck`
-3. Commit your changes with a descriptive message referencing {{issue.identifier}}
-4. Push to a feature branch: `git push -u origin {{issue.identifier | slugify}}`
-5. Report completion to the orchestrator
+### Phase 1: Research
+- Read the relevant source code, tests, and docs
+- Understand existing patterns before writing new code
+- Do NOT make changes yet
 
-## If you're blocked
+### Phase 2: Plan
+- Create a brief plan in your workspace
+- List files you'll change and your approach
+- Push a status update to the orchestrator with your plan summary
 
-Push a status update explaining what you're blocked on. The orchestrator
-will either help you or escalate to the user.
+### Phase 3: Execute
+- Implement in small, focused commits
+- Each commit should be a logical unit of work
+- Follow CLAUDE.md golden principles — no fallbacks, no N+1, typed SDKs
+- Write or update tests alongside your changes
+- Reference {{issue.identifier}} in commit messages
+
+### Phase 4: Verify
+- Run all quality gates: `pnpm typecheck && pnpm test && pnpm lint`
+- Fix any failures — do not skip or silence them
+- Ensure `git status` is clean (no untracked files)
+
+### Phase 5: Deliver
+- Push to branch: `feature/{{issue.identifier | slugify}}`
+- Report completion to the orchestrator with a summary of changes
+
+## If You're Stuck
+Push a status update explaining the blocker. The orchestrator will help
+or escalate to the user. Do NOT silently spin — ask for help.
 ```
 
 ### Phase 3: Orchestrator Tick Loop
@@ -135,7 +268,7 @@ RetryQueued ──reconcile(terminal)──► Released
 ```
 1. Reconcile running agents
    a. Stall detection: kill agents with no activity > stall_timeout_ms
-   b. ADO state refresh: stop agents whose items moved to terminal/non-active state
+   b. ADO state refresh: stop agents whose items moved to terminal/non-active
    c. ADO iteration check: stop agents whose items left the agent sprint
 
 2. Validate config
@@ -156,14 +289,35 @@ RetryQueued ──reconcile(terminal)──► Released
       - Spawn agent container
       - Run hooks (after_create if new, before_run always)
       - Start Claude Code session with rendered prompt
+      - Record user intent: issue title + description + acceptance criteria
       - Track in running map
 
 5. Notify observers (push status update to user if anything changed)
+
+6. Meta-loop check
+   - Review any agent failures from this tick
+   - If pattern detected, log it and consider harness updates
 ```
 
-#### Implementation Location
+#### Orchestrator State (Per Running Agent)
 
-Add to `channel/agent-channel.ts` as a new module or separate file that the channel imports. The tick loop runs alongside the HTTP listener and MCP server in the same Bun process.
+```typescript
+interface RunningAgent {
+  issueId: number
+  identifier: string
+  issue: Issue                    // full normalized issue
+  userIntent: string              // why this agent was spawned
+  containerId: string
+  hostPort: number
+  channelPort: number
+  homeDir: string
+  startedAt: string
+  lastActivityAt: string
+  turnCount: number
+  currentPhase: 'research' | 'plan' | 'execute' | 'verify' | 'deliver'
+  status: string
+}
+```
 
 ### Phase 4: ADO Tracker Adapter
 
@@ -173,20 +327,13 @@ Add to `channel/agent-channel.ts` as a new module or separate file that the chan
 
 ```typescript
 interface ADOTracker {
-  // Fetch work items in agent sprint with active states
   fetchCandidateIssues(): Promise<Issue[]>
-
-  // Fetch current state for specific work item IDs (reconciliation)
   fetchIssueStatesByIds(ids: number[]): Promise<Issue[]>
-
-  // Fetch terminal-state items (startup cleanup)
   fetchIssuesByStates(states: string[]): Promise<Issue[]>
 }
 ```
 
 #### Issue Normalization
-
-Map ADO fields to Symphony's Issue entity:
 
 | Symphony field | ADO field |
 |---------------|-----------|
@@ -206,7 +353,7 @@ Map ADO fields to Symphony's Issue entity:
 
 #### Implementation
 
-Use `az boards` CLI commands (already tested and working) wrapped in the tracker interface. No direct REST API needed — the CLI handles auth, pagination, and error mapping.
+Use `az boards` CLI commands wrapped in the tracker interface. The CLI handles auth, pagination, and error mapping.
 
 ### Phase 5: Workspace Manager
 
@@ -224,8 +371,6 @@ Use `az boards` CLI commands (already tested and working) wrapped in the tracker
       ├── .claude/            ← agent's Claude settings
       └── env/                ← mounted env files
 ```
-
-Workspace key: sanitized issue identifier (e.g. `ws-4908412`).
 
 #### Lifecycle
 
@@ -246,66 +391,71 @@ Workspace key: sanitized issue identifier (e.g. `ws-4908412`).
    - Default max: 5 minutes
 3. **Reconciliation** (issue state changed externally): no retry, just release
 
-#### Retry State
-
-```typescript
-interface RetryEntry {
-  issueId: number
-  identifier: string
-  attempt: number        // 1-based
-  dueAtMs: number        // when to retry
-  error?: string         // why previous attempt failed
-}
-```
-
 ### Phase 7: Stall Detection
 
 **Goal**: Detect and recover from stuck agents.
 
-Track `lastActivityTimestamp` per running agent. Activity = any push event from the agent (status, result, prompt, permission_request).
+Track `lastActivityAt` per running agent. Activity = any push event (status, result, prompt, permission_request).
 
-If `now - lastActivityTimestamp > stall_timeout_ms`:
+If `now - lastActivityAt > stall_timeout_ms`:
 1. Message the agent: "You appear to be stalled. Save your work and report status."
 2. Wait 30 seconds for a response
 3. If no response, have agent save memories, then kill the container
 4. Schedule retry with backoff
+5. Log the stall in project memory for the meta-loop
 
-### Phase 8: Proof of Work
+### Phase 8: Proof of Work (Deterministic Gates)
 
-**Goal**: Verify agent output before marking work complete.
+**Goal**: Verify agent output with hard checks before LLM evaluation.
 
-Before marking a work item as Resolved, the orchestrator should verify:
+Gates are defined in WORKFLOW.md's `gates` field. Run in order:
 
-1. **Tests pass**: dispatch `pnpm test` and check exit code
-2. **Types check**: dispatch `pnpm typecheck`
-3. **Branch pushed**: check `git log --oneline origin/<branch>..HEAD` is empty
-4. **PR created**: check for open PR referencing the issue
-5. **No untracked files**: dispatch `git status --porcelain`
+```yaml
+gates:
+  - pnpm typecheck
+  - pnpm test
+  - pnpm lint
+```
 
-If any check fails, the agent continues working (counts as a new turn).
+Each gate:
+1. Dispatch the command to the agent container
+2. Check exit code (0 = pass, non-zero = fail)
+3. If any gate fails, the agent continues working (new turn, same workspace)
+4. All gates pass → orchestrator evaluates the work (LLM review)
+5. LLM review passes → mark work item Resolved, push PR
 
-### Phase 9: Observability
+The orchestrator's LLM review checks:
+- Does the change actually address the work item's requirements?
+- Does it follow the project's golden principles?
+- Are there obvious issues the gates wouldn't catch?
+
+### Phase 9: Observability and ADO Integration
 
 **Goal**: Know what's happening without staring at terminals.
 
-#### Status Surface
+#### ADO Status Updates
 
-The orchestrator channel's `/health` endpoint already returns agent state. Extend it with:
-- Running agents with current issue, turn count, last activity
-- Retry queue with next attempt times
-- Completed issues since last restart
+As agents work, the orchestrator updates ADO:
+- **Agent starts**: Move work item New → Active, add comment "Agent assigned"
+- **Agent completes a phase**: Add comment with phase summary
+- **Agent blocked**: Add comment, tag `agent-blocked`
+- **Gates pass**: Add comment with gate results
+- **PR created**: Link PR to work item
+- **Work complete**: Move Active → Resolved, tag `agent-completed`
+
+#### Orchestrator Health Endpoint
+
+Extend `/health` with:
+- Running agents: issue, phase, turn count, last activity
+- Retry queue: next attempt times, failure reasons
+- Completed since last restart
 - Token usage totals
-
-#### ADO Integration
-
-- Add comments to work items as agents make progress
-- Update work item state transitions (New → Active when agent starts, Active → Resolved when verified)
-- Link PRs to work items
+- Meta-loop signals: recent failures, harness update suggestions
 
 #### User Notifications
 
-- Push events through the channel for the user's Claude session
-- For mobile: ADO work item state changes trigger Teams notifications (existing infra)
+- Push events through channel for the user's Claude session
+- ADO work item state changes trigger Teams notifications (existing infra)
 
 ## Implementation Order
 
@@ -313,26 +463,26 @@ The orchestrator channel's `/health` endpoint already returns agent state. Exten
 |-------|--------|-------------|----------|
 | 1. ADO Agent Sprint | Small | ADO access (done) | Do first |
 | 2. WORKFLOW.md | Medium | Phase 1 | Do first |
-| 3. Tick Loop | Large | Phase 2 | Core — do next |
-| 4. ADO Tracker | Medium | Phase 1, 3 | Core — do next |
-| 5. Workspace Manager | Medium | Phase 3 | Core — do next |
-| 6. Retry/Backoff | Small | Phase 3 | Add to tick loop |
-| 7. Stall Detection | Small | Phase 3 | Add to tick loop |
-| 8. Proof of Work | Medium | Phase 5 | After core works |
+| 3. Tick Loop | Large | Phase 2 | Core |
+| 4. ADO Tracker | Medium | Phase 1, 3 | Core |
+| 5. Workspace Manager | Medium | Phase 3 | Core |
+| 6. Retry/Backoff | Small | Phase 3 | Resilience |
+| 7. Stall Detection | Small | Phase 3 | Resilience |
+| 8. Proof of Work | Medium | Phase 5 | Quality |
 | 9. Observability | Medium | Phase 3, 4 | Polish |
 
 **Recommended approach**: Phases 1-2 first (setup), then 3-5 together (core loop), then 6-7 (resilience), then 8-9 (quality + visibility).
 
 ## Open Questions
 
-1. **Max concurrent agents**: How many agents can run simultaneously on your machine? Each gets 4GB memory. With 3 agents + orchestrator, that's ~16GB.
+1. **Max concurrent agents**: How many agents can run simultaneously? Each gets 4GB memory. With 3 agents + orchestrator, that's ~16GB.
 
-2. **Branch strategy**: Should agents work on feature branches named after the issue ID? Should they create PRs automatically?
+2. **Branch strategy**: Agents work on `feature/<issue-id>-<slug>` branches. Auto-create PRs.
 
-3. **PR review**: Should the orchestrator review PRs from agents before they're marked complete? Or is the proof-of-work check sufficient?
+3. **PR review**: Orchestrator does LLM review after gates pass. Human reviews the PR on GitHub/ADO.
 
-4. **Continuation vs fresh start**: When retrying, should agents continue in the same workspace (with memory) or start fresh? Symphony continues by default, fresh only on explicit reset.
+4. **Continuation vs fresh start**: Continue by default (workspace persists, memory file has context). Fresh start only on explicit reset.
 
-5. **ADO pipeline trigger**: Should completing a work item automatically trigger the deployment pipeline? Or leave that manual?
+5. **ADO pipeline trigger**: Leave manual for now. The orchestrator can approve pipeline runs via the ado-pipelines skill when asked.
 
-6. **Multi-project**: The tick loop currently assumes one project. When we add more projects, do they share the same orchestrator with separate WORKFLOW.md files, or separate orchestrator instances?
+6. **Multi-project**: One orchestrator, multiple WORKFLOW.md files (one per repo). The tick loop iterates across all registered projects.
