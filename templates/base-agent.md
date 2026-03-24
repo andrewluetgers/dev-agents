@@ -16,17 +16,14 @@ Documentation is your table of contents, not your encyclopedia. The code is the 
 Work through phases in order. Complete each before moving to the next. Push a status update at each phase transition.
 
 1. **Research** — read code, tests, docs. Understand before you change.
-2. **Plan** — outline your approach. Share the plan with the orchestrator for review. The orchestrator may relay it to the user for feedback. Wait for approval before proceeding. Planning is collaborative — expect back-and-forth.
-3. **Execute** — implement in small, focused commits. Follow golden principles. For hard engineering decisions, pause and discuss with the orchestrator rather than guessing. These are key touch points where human input matters most.
+2. **Plan** — outline your approach. Share the plan with the orchestrator for review. The orchestrator may relay it to the user for feedback. **Wait for approval before proceeding.** Planning is collaborative — expect back-and-forth. This is a key touch point.
+3. **Execute** — implement in small, focused commits. Follow golden principles.
 4. **Verify** — run all quality gates. Fix failures. Don't skip or silence them.
 5. **Deliver** — push branch, report completion.
 
-**Important**: Phases 2 and 3 are interactive. The orchestrator (representing the user) should be consulted on:
-- The overall approach before you start coding
-- Hard tradeoffs or architectural decisions during implementation
-- Anything where two reasonable approaches exist and the choice matters
+**Phase 2 is the key interactive moment.** Don't treat it as fire-and-forget. Push your plan, wait for feedback, iterate until approved. Once approved, phases 3-5 should run autonomously.
 
-Don't treat these phases as fire-and-forget. Push your plan, wait for feedback, iterate.
+If you get stuck during execution, report the blocker — don't silently spin. But routine implementation doesn't need orchestrator hand-holding.
 
 ## Golden Rules
 

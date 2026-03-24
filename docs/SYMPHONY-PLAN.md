@@ -54,7 +54,7 @@ Only after all gates pass does the orchestrator (LLM) evaluate the work.
 
 ### 5. Structured Execution Phases
 
-Agents don't just "implement the feature." They work through phases with clear gates between them. **Phases 2 and 3 are interactive touch points** where the orchestrator (representing the user) actively participates.
+Agents don't just "implement the feature." They work through phases with clear gates between them.
 
 ```
 Phase 1: Research (agent solo)
@@ -62,18 +62,16 @@ Phase 1: Research (agent solo)
   - Understand the existing patterns
   - Output: understanding, no code changes
 
-Phase 2: Plan ★ INTERACTIVE — key touch point
+Phase 2: Plan ★ KEY TOUCH POINT
   - Agent proposes a plan to the orchestrator
   - Orchestrator reviews, may relay to user for input
   - Back-and-forth until approach is agreed
   - Plan is NOT fire-and-forget — expect iteration
   - Output: approved plan
 
-Phase 3: Execute ★ INTERACTIVE for hard decisions
+Phase 3: Execute (agent solo, orchestrator monitors)
   - Implement in small, focused commits
   - Follow golden principles from CLAUDE.md
-  - Pause at hard engineering tradeoffs and consult orchestrator
-  - "Two reasonable approaches exist" = ask, don't guess
   - Output: working code with tests
 
 Phase 4: Verify (agent solo, deterministic)
@@ -88,16 +86,27 @@ Phase 5: Deliver (agent solo)
   - Output: PR ready for review
 ```
 
-The interactive phases are where value is created. Research, verify, and deliver are mechanical — any agent can do them. Planning well and making the right engineering tradeoffs require collaboration. The orchestrator's job is to facilitate this, either by answering from its own context or by escalating to the user.
+**Two key touch points require user involvement:**
 
-### 6. Entropy Management (The Meta-Loop)
+1. **Planning** (Phase 2) — the user and orchestrator agree on the approach before the agent writes code. This is collaborative and iterative. The agent proposes, the orchestrator (and user) refine.
 
-When agents struggle, treat it as a signal. The orchestrator should:
+2. **Harness engineering** — when the system itself isn't working. Agents keep failing, stalling, or producing bad output. This is NOT a problem the agent can fix — it's a problem with the orchestrator, the templates, the workflow, the golden principles, or the tooling. The orchestrator escalates to the user: "agents keep hitting this wall, we need to change the harness."
+
+Everything else — research, execution, verification, delivery — runs autonomously. The orchestrator monitors and handles permissions, but the user shouldn't need to be involved for routine work.
+
+### 6. Entropy Management (The Meta-Loop / Harness Engineering)
+
+When agents struggle, it's a signal that the **harness** needs work — not just the agent. The orchestrator should:
 - Track failure patterns across agents and issues
-- Update `.dev-agents/memory.md` with new gotchas
-- Update `CLAUDE.md` if agents keep violating a convention
-- Update `WORKFLOW.md` if the prompt template needs better guidance
-- Update shared skills if a common operation keeps failing
+- Escalate to the user when patterns repeat: "this is a harness problem, not an agent problem"
+- The user and orchestrator then collaborate on fixes to:
+  - `.dev-agents/memory.md` — new gotchas agents need to know
+  - `CLAUDE.md` — golden principles agents keep violating
+  - `WORKFLOW.md` — prompt template that's producing bad plans
+  - Shared skills — common operations agents keep getting wrong
+  - Docker image — missing tools or wrong environment setup
+
+Harness engineering is the user's job, with orchestrator assistance. It's working ON the system, not IN the system. These sessions are the most valuable — they compound across every future agent run.
 
 This is the **meta-loop** — the system improves itself over time.
 
