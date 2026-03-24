@@ -296,7 +296,27 @@ Verify it's registered:
 claude mcp list
 ```
 
-If everything passed: "Setup complete! Start a new Claude Code session from any project directory. The orchestrator channel loads automatically — use `spawn_agent` to create agents."
+### 12. Install global skills
+
+Copy the orchestrator slash commands to `~/.claude/skills/` so they're available from any directory:
+
+```bash
+mkdir -p ~/.claude/skills
+cp -r /path/to/dev-agents/.claude/skills/spawn ~/.claude/skills/
+cp -r /path/to/dev-agents/.claude/skills/stop ~/.claude/skills/
+cp -r /path/to/dev-agents/.claude/skills/msg ~/.claude/skills/
+cp -r /path/to/dev-agents/.claude/skills/run ~/.claude/skills/
+cp -r /path/to/dev-agents/.claude/skills/dev-agents ~/.claude/skills/
+```
+
+This gives users these commands globally:
+- `/spawn [project] [task]` — spawn an agent
+- `/stop [agent]` — stop an agent
+- `/msg <agent> <message>` — message an agent
+- `/run <agent> <command>` — run a command in an agent
+- `/dev-agents` — list running agents
+
+If everything passed: "Setup complete! Start a new Claude Code session from any project directory. Use `/spawn` to create agents, `/dev-agents` to list them."
 
 ## Notes
 
