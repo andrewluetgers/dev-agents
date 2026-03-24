@@ -620,6 +620,54 @@ function text(t: string) {
   return { content: [{ type: "text" as const, text: t }] };
 }
 
+// --- Auto-discover running agent containers ---
+
+async function discoverAgents() {
+  try {
+    const result = await run([
+      "docker", "ps", "--filter", "name=dev-", "--format", "{{.Names}}",
+    ]);
+    if (!result.stdout) return;
+
+    for (const name of result.stdout.split("\n").filter(Boolean)) {
+      const agentId = name.replace(/^dev-/, "");
+      if (agents.has(agentId)) continue;
+
+      // Get ports
+      let hostPort = 0;
+      let channelPort = 0;
+      try {
+        const p = await run(["docker", "port", name, "9111"]);
+        const m = p.stdout.match(/:(\d+)/);
+        if (m) hostPort = parseInt(m[1], 10);
+      } catch {}
+      try {
+        const p = await run(["docker", "port", name, "9222"]);
+        const m = p.stdout.match(/:(\d+)/);
+        if (m) channelPort = parseInt(m[1], 10);
+      } catch {}
+
+      if (hostPort) {
+        agents.set(agentId, {
+          containerId: name,
+          hostPort,
+          channelPort,
+          homeDir: join(config.homesDir, agentId),
+          project: null,
+          lastSeen: new Date().toISOString(),
+          status: "discovered",
+        });
+      }
+    }
+
+    if (agents.size > 0) {
+      console.error(`Discovered ${agents.size} running agent(s): ${[...agents.keys()].join(", ")}`);
+    }
+  } catch {}
+}
+
+await discoverAgents();
+
 // --- Connect to Claude Code ---
 
 await mcp.connect(new StdioServerTransport());
