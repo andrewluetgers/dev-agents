@@ -16,6 +16,8 @@ Examples:
 - `/dev-agent` — show running agents or offer to spawn one
 - `/dev-agent new cohort-search` — spawn a new agent for cohort-search
 - `/dev-agent new cohort-search write playwright smoke tests` — spawn and assign a task
+- `/dev-agent status` — show status of all running agents
+- `/dev-agent status cs-playwright` — detailed status of one agent
 - `/dev-agent msg cs-playwright focus on login flow first` — message an agent
 - `/dev-agent run cs-playwright pnpm test` — run a command in an agent
 - `/dev-agent stop cs-playwright` — stop an agent
@@ -37,6 +39,7 @@ Parse the first argument to determine what to do:
 |-----------|--------|
 | (none) | List agents, or offer to spawn if none running |
 | `new` | Spawn a new agent |
+| `status` | Show status of all agents (or one if name follows) |
 | `msg` | Message an agent |
 | `run` | Run a command in an agent |
 | `stop` | Stop an agent |
@@ -60,6 +63,20 @@ Arguments: `/dev-agent new [project] [task...]`
 4. Wait 3 seconds, then call `mcp__agent__dispatch(agent: "<name>", command: "curl -s localhost:9111/health")`
 5. If task was given, call `mcp__agent__message(agent: "<name>", content: "<task>")`
 6. Report: agent name, project, port, task assigned
+
+### Action: Status
+
+Arguments: `/dev-agent status [agent-name]`
+
+1. Call `mcp__agent__list_agents`
+2. If an agent name was given, filter to just that agent
+3. For each agent, also call `mcp__agent__dispatch(agent: "<name>", command: "curl -s localhost:9111/health")` to get live health
+4. Show a concise summary:
+   ```
+   cs-playwright (cohort-search) — running
+     Port: 55010 | Channel: 55011 | Health: ok
+     Claude session: active | Pending permissions: 0
+   ```
 
 ### Action: Message
 
