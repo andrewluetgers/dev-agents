@@ -626,6 +626,21 @@ await mcp.connect(new StdioServerTransport());
 
 // --- HTTP listener: receives push events from agent containers ---
 
+// Kill any stale process holding our port (orphaned from a crashed session)
+try {
+  const stale = Bun.spawnSync(["lsof", "-ti", `:${CHANNEL_PORT}`]);
+  const pids = stale.stdout.toString().trim();
+  if (pids) {
+    for (const pid of pids.split("\n")) {
+      if (pid && parseInt(pid) !== process.pid) {
+        process.kill(parseInt(pid), 9);
+      }
+    }
+    // Brief pause for port to release
+    await new Promise(r => setTimeout(r, 200));
+  }
+} catch {}
+
 Bun.serve({
   port: CHANNEL_PORT,
   hostname: "127.0.0.1",
