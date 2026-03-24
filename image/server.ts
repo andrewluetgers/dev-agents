@@ -1,28 +1,25 @@
 #!/usr/bin/env bun
 //
-// Agent server — runs inside every container (worker + orchestrator)
+// Agent server — runs inside every container
 //
-// Single Bun process that handles:
-//   - Command server (:9111) — exec, health, notify, ask, respond
-//   - Agent channel (:9222) — receives messages from orchestrator,
-//     pushes them into the local Claude Code session via MCP
-//   - Permission relay — forwards Claude Code permission prompts to
-//     the orchestrator for approval/denial
+// Manages the agent's Claude Code session via stream-json protocol.
+// Three responsibilities:
+//   1. HTTP servers (:9111 command, :9222 channel)
+//   2. Claude Code child process (stream-json stdin/stdout)
+//   3. Dispatcher: logs to file, feeds SSE, pushes key events to orchestrator
 //
-// The command server is always on. The agent channel starts when
-// CHANNEL_URL is set (i.e. this is a worker, not the orchestrator).
 
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
+import { appendFileSync, writeFileSync } from "node:fs";
 
 const CMD_PORT = parseInt(Bun.env.AGENT_PORT || "9111", 10);
 const CHANNEL_PORT = parseInt(Bun.env.AGENT_CHANNEL_PORT || "9222", 10);
 const WORKSPACE = Bun.env.WORKSPACE || "/home/agent/workspace";
 const AGENT_ID = Bun.env.AGENT_ID || "agent-1";
 const CHANNEL_URL = Bun.env.CHANNEL_URL || "";
+const LOG_FILE = "/home/agent/claude-session.log";
+const STATUS_FILE = "/home/agent/STATUS.md";
 
-// --- Push to orchestrator ---
+// --- Push to orchestrator (only for important events) ---
 
 async function pushToOrchestrator(
   type: string,
@@ -78,16 +75,193 @@ async function execCommand(
   }
 }
 
+// --- Claude Code session (stream-json) ---
+
+let claudeProc: ReturnType<typeof Bun.spawn> | null = null;
+let claudeStdin: WritableStream | null = null;
+let claudeWriter: WritableStreamDefaultWriter | null = null;
+let sessionActive = false;
+
+// SSE clients watching the live stream
+const sseClients = new Set<ReadableStreamDefaultController>();
+
+// Current session state (derived from stream, cheap to read)
+let sessionState = {
+  status: "idle" as "idle" | "starting" | "running" | "thinking" | "tool_use" | "done" | "error",
+  currentTool: null as string | null,
+  lastActivity: new Date().toISOString(),
+  turns: 0,
+};
+
+function logLine(line: string) {
+  try {
+    appendFileSync(LOG_FILE, line + "\n");
+  } catch {}
+}
+
+function broadcastSSE(data: string) {
+  const msg = `data: ${data}\n\n`;
+  for (const controller of sseClients) {
+    try {
+      controller.enqueue(new TextEncoder().encode(msg));
+    } catch {
+      sseClients.delete(controller);
+    }
+  }
+}
+
+function processOutputLine(line: string) {
+  // Log everything to file
+  logLine(line);
+
+  // Broadcast to SSE clients
+  broadcastSSE(line);
+
+  // Parse and update state / push important events
+  try {
+    const event = JSON.parse(line);
+    sessionState.lastActivity = new Date().toISOString();
+
+    if (event.type === "system" && event.subtype === "init") {
+      sessionState.status = "running";
+      sessionState.turns = 0;
+      pushToOrchestrator("status", "Claude session started");
+    } else if (event.type === "assistant") {
+      const content = event.message?.content || [];
+      for (const block of content) {
+        if (block.type === "tool_use") {
+          sessionState.status = "tool_use";
+          sessionState.currentTool = block.name;
+        } else if (block.type === "text") {
+          sessionState.status = "thinking";
+          sessionState.currentTool = null;
+        }
+      }
+    } else if (event.type === "result") {
+      sessionState.turns++;
+      if (event.subtype === "success") {
+        sessionState.status = "done";
+        sessionState.currentTool = null;
+        pushToOrchestrator("result", event.result?.slice(0, 500) || "Task complete");
+      } else {
+        sessionState.status = "error";
+        pushToOrchestrator("error", event.result?.slice(0, 500) || "Session error");
+      }
+    }
+  } catch {
+    // Not JSON, just log it
+  }
+}
+
+async function startClaude(initialPrompt?: string) {
+  if (claudeProc) return;
+
+  sessionState.status = "starting";
+
+  // Build claude command
+  const args = [
+    "claude",
+    "-p",
+    "--output-format", "stream-json",
+    "--input-format", "stream-json",
+    "--verbose",
+    "--dangerously-skip-permissions",
+    "--model", Bun.env.CLAUDE_MODEL || "sonnet",
+  ];
+
+  // Add MCP config for Playwright if available
+  const mcpConfig = {
+    mcpServers: {
+      playwright: {
+        command: "npx",
+        args: ["@playwright/mcp@latest", "--headless", "--browser", "chromium"],
+      },
+    },
+  };
+  args.push("--mcp-config", JSON.stringify(mcpConfig));
+
+  logLine(JSON.stringify({ type: "server", event: "starting_claude", args, timestamp: new Date().toISOString() }));
+
+  claudeProc = Bun.spawn(args, {
+    cwd: WORKSPACE,
+    env: { ...Bun.env, TERM: "dumb" },
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  claudeStdin = claudeProc.stdin as WritableStream;
+  claudeWriter = claudeStdin.getWriter();
+
+  // Read stdout line by line
+  const reader = claudeProc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  (async () => {
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          if (line.trim()) processOutputLine(line.trim());
+        }
+      }
+      if (buffer.trim()) processOutputLine(buffer.trim());
+    } catch (err: any) {
+      logLine(JSON.stringify({ type: "server", event: "stdout_error", error: err.message }));
+    }
+    sessionActive = false;
+    sessionState.status = "done";
+    pushToOrchestrator("status", "Claude session ended");
+  })();
+
+  // Read stderr
+  const stderrReader = claudeProc.stderr.getReader();
+  (async () => {
+    try {
+      while (true) {
+        const { done, value } = await stderrReader.read();
+        if (done) break;
+        const text = decoder.decode(value, { stream: true });
+        if (text.trim()) logLine(JSON.stringify({ type: "server", event: "stderr", text: text.trim() }));
+      }
+    } catch {}
+  })();
+
+  // Wait for process to be ready, then send initial prompt
+  sessionActive = true;
+
+  if (initialPrompt) {
+    // Small delay to let claude initialize
+    await new Promise(r => setTimeout(r, 1000));
+    await sendMessage(initialPrompt);
+  }
+}
+
+async function sendMessage(content: string): Promise<boolean> {
+  if (!claudeWriter || !sessionActive) return false;
+  const msg = JSON.stringify({
+    type: "user",
+    message: { role: "user", content },
+  }) + "\n";
+
+  try {
+    await claudeWriter.write(new TextEncoder().encode(msg));
+    logLine(JSON.stringify({ type: "server", event: "message_sent", content: content.slice(0, 200) }));
+    return true;
+  } catch (err: any) {
+    logLine(JSON.stringify({ type: "server", event: "send_error", error: err.message }));
+    return false;
+  }
+}
+
 // --- Pending callbacks ---
 
 let pendingReply: ((response: string) => void) | null = null;
-
-// Permission verdicts: request_id → resolve function
-const pendingPermissions = new Map<string, (verdict: "allow" | "deny") => void>();
-
-// --- Agent channel MCP server ---
-
-let agentMcp: Server | null = null;
 
 // --- Command server (:9111) ---
 
@@ -108,7 +282,7 @@ Bun.serve({
       });
     }
 
-    // Health
+    // Health + session state
     if (req.method === "GET" && url.pathname === "/health") {
       return Response.json({
         status: "ok",
@@ -116,7 +290,34 @@ Bun.serve({
         workspace: WORKSPACE,
         channel: CHANNEL_URL || null,
         ports: { command: CMD_PORT, channel: CHANNEL_PORT },
-        pendingPermissions: pendingPermissions.size,
+        session: sessionState,
+      });
+    }
+
+    // Live activity stream (SSE)
+    if (req.method === "GET" && url.pathname === "/stream") {
+      const stream = new ReadableStream({
+        start(controller) {
+          sseClients.add(controller);
+          // Send current state as first event
+          controller.enqueue(
+            new TextEncoder().encode(
+              `data: ${JSON.stringify({ type: "server", event: "connected", session: sessionState })}\n\n`
+            )
+          );
+        },
+        cancel(controller) {
+          sseClients.delete(controller);
+        },
+      });
+
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+          "Access-Control-Allow-Origin": "*",
+        },
       });
     }
 
@@ -136,6 +337,16 @@ Bun.serve({
         body.timeout || 120_000
       );
       return Response.json(result);
+    }
+
+    // Start Claude session
+    if (req.method === "POST" && url.pathname === "/start") {
+      const body = (await req.json()) as { prompt?: string };
+      if (sessionActive) {
+        return Response.json({ status: "already_running", session: sessionState });
+      }
+      await startClaude(body.prompt);
+      return Response.json({ status: "started", session: sessionState });
     }
 
     // Push a notification to the orchestrator
@@ -184,46 +395,11 @@ Bun.serve({
       return Response.json({ status: "no_pending_prompt" });
     }
 
-    // Receive a permission verdict from the orchestrator
-    if (req.method === "POST" && url.pathname === "/permission") {
-      const body = (await req.json()) as {
-        request_id?: string;
-        verdict?: "allow" | "deny";
-      };
-      if (!body.request_id || !body.verdict) {
-        return Response.json(
-          { error: "request_id and verdict are required" },
-          { status: 400 }
-        );
-      }
-
-      const resolve = pendingPermissions.get(body.request_id);
-      if (resolve) {
-        resolve(body.verdict);
-        pendingPermissions.delete(body.request_id);
-
-        // Also relay to Claude Code via MCP notification if connected
-        if (agentMcp) {
-          await agentMcp.notification({
-            method: "notifications/claude/channel/permission" as any,
-            params: {
-              request_id: body.request_id,
-              behavior: body.verdict,
-            },
-          });
-        }
-
-        return Response.json({ status: "verdict_delivered", request_id: body.request_id });
-      }
-
-      return Response.json({ status: "no_pending_request", request_id: body.request_id });
-    }
-
     return Response.json({ error: "not found" }, { status: 404 });
   },
 });
 
-// --- Agent channel server (:9222) ---
+// --- Channel server (:9222) — message injection ---
 
 Bun.serve({
   port: CHANNEL_PORT,
@@ -232,10 +408,15 @@ Bun.serve({
     const url = new URL(req.url);
 
     if (req.method === "GET" && url.pathname === "/health") {
-      return Response.json({ status: "ok", agent: AGENT_ID, channel: true });
+      return Response.json({
+        status: "ok",
+        agent: AGENT_ID,
+        sessionActive,
+        session: sessionState,
+      });
     }
 
-    // Orchestrator pushes a message to inject into the agent's Claude session
+    // Inject a message into Claude's session (like /btw)
     if (req.method === "POST" && url.pathname === "/message") {
       const body = (await req.json()) as {
         content?: string;
@@ -244,173 +425,19 @@ Bun.serve({
       const content = body.content || "";
       const from = body.from || "orchestrator";
 
-      if (agentMcp) {
-        await agentMcp.notification({
-          method: "notifications/claude/channel",
-          params: {
-            content,
-            meta: { from, agent: AGENT_ID },
-          },
-        });
-        return Response.json({ status: "injected" });
+      if (!sessionActive) {
+        return Response.json({ status: "no_claude_session", content });
       }
 
-      return Response.json({ status: "no_claude_session", content });
+      const sent = await sendMessage(`[From ${from}]: ${content}`);
+      return Response.json({
+        status: sent ? "injected" : "send_failed",
+      });
     }
 
     return Response.json({ error: "not found" }, { status: 404 });
   },
 });
-
-// --- MCP channel for agent's Claude Code session ---
-//
-// When AGENT_CHANNEL_MODE=mcp, this process is spawned by Claude Code
-// as a channel server over stdio. It:
-//   1. Pushes orchestrator messages into the Claude session
-//   2. Relays permission prompts to the orchestrator for approval
-//   3. Receives verdicts back and forwards them to Claude Code
-
-if (Bun.env.AGENT_CHANNEL_MODE === "mcp") {
-  agentMcp = new Server(
-    { name: `agent-${AGENT_ID}`, version: "0.2.0" },
-    {
-      capabilities: {
-        experimental: {
-          "claude/channel": {},
-          "claude/channel/permission": {}, // opt in to permission relay
-        },
-        tools: {},
-      },
-      instructions: `You are agent "${AGENT_ID}" working under an orchestrator.
-
-Messages from the orchestrator arrive as <channel> events. Read them and act accordingly.
-If the orchestrator tells you to stop or change direction, comply immediately.
-
-Your tool-use permissions are managed by the orchestrator. When you need to run a command
-or write a file, the permission prompt is forwarded to the orchestrator for approval.
-You don't need to do anything special — just work normally and the orchestrator will
-approve or deny as appropriate.
-
-## Status File
-
-Maintain /home/agent/STATUS.md throughout your work. The orchestrator reads this to track your progress.
-
-**Update it at these points:**
-- When you receive a task: write the Task and Plan sections
-- When you start a new step: update the Current section
-- When you complete a step: check it off in Plan, add a line to Progress with timestamp
-- When you hit a blocker: write the Blockers section
-- When you take a screenshot: add it to Screenshots
-
-**Format:**
-\`\`\`markdown
-# Agent Status
-
-## Task
-<what you were asked to do>
-
-## Plan
-- [x] Completed step
-- [ ] Current step ← you are here
-- [ ] Future step
-
-## Current
-**Action:** <what you're doing right now>
-**Started:** <ISO timestamp>
-**Detail:** <brief detail>
-
-## Progress
-- <timestamp> — <what you completed>
-- <timestamp> — <what you completed>
-
-## Blockers
-<anything you're stuck on>
-
-## Screenshots
-- screenshots/<name>.png — <description>
-
-## Notes
-<decisions, discoveries, context>
-\`\`\`
-
-Keep it concise. Update Current frequently — the orchestrator checks this to know if you're making progress or stuck.
-
-## Browser Testing
-
-When working with the browser (Playwright MCP), save screenshots to /home/agent/screenshots/:
-  mkdir -p /home/agent/screenshots
-
-For complex UI verification, use a sub-agent to analyze screenshots instead of loading them
-into your own context. This keeps your working context clean.
-
-## Communication
-
-To communicate back to the orchestrator:
-  curl -s $CHANNEL_URL -H 'Content-Type: application/json' \\
-    -d '{"type": "<type>", "agent": "${AGENT_ID}", "content": "<message>"}'
-
-Types: result, status, error, prompt, request`,
-    }
-  );
-
-  // --- Permission relay: Claude Code → orchestrator ---
-  //
-  // When Claude wants to use a tool that requires approval, Claude Code
-  // sends a permission_request notification. We forward it to the orchestrator,
-  // wait for the verdict, and relay it back.
-
-  const PermissionRequestSchema = z.object({
-    method: z.literal(
-      "notifications/claude/channel/permission_request" as any
-    ),
-    params: z.object({
-      request_id: z.string(),
-      tool_name: z.string(),
-      description: z.string(),
-      input_preview: z.string(),
-    }),
-  });
-
-  agentMcp.setNotificationHandler(
-    PermissionRequestSchema,
-    async ({ params }) => {
-      // Push the permission request to the orchestrator
-      await pushToOrchestrator("permission_request", params.description, {
-        permission: {
-          request_id: params.request_id,
-          tool_name: params.tool_name,
-          description: params.description,
-          input_preview: params.input_preview,
-        },
-      });
-
-      // Register a pending callback for the verdict
-      // The orchestrator will POST to /permission with the verdict
-      const verdict = await new Promise<"allow" | "deny">((resolve) => {
-        pendingPermissions.set(params.request_id, resolve);
-
-        // Timeout after 5 minutes — deny by default
-        setTimeout(() => {
-          if (pendingPermissions.has(params.request_id)) {
-            pendingPermissions.delete(params.request_id);
-            resolve("deny");
-          }
-        }, 300_000);
-      });
-
-      // Relay verdict back to Claude Code
-      await agentMcp!.notification({
-        method: "notifications/claude/channel/permission" as any,
-        params: {
-          request_id: params.request_id,
-          behavior: verdict,
-        },
-      });
-    }
-  );
-
-  await agentMcp.connect(new StdioServerTransport());
-}
 
 // --- Startup ---
 
@@ -419,9 +446,12 @@ console.log(`  Command server: :${CMD_PORT}`);
 console.log(`  Channel server: :${CHANNEL_PORT}`);
 console.log(`  Workspace: ${WORKSPACE}`);
 console.log(`  Orchestrator: ${CHANNEL_URL || "(none)"}`);
-console.log(
-  `  Permission relay: ${Bun.env.AGENT_CHANNEL_MODE === "mcp" ? "active" : "inactive"}`
-);
 
 // Announce to orchestrator
 pushToOrchestrator("status", `Agent ${AGENT_ID} ready`);
+
+// Auto-start Claude if an initial prompt is provided via env
+if (Bun.env.AGENT_TASK) {
+  console.log(`  Auto-starting Claude with task: ${Bun.env.AGENT_TASK.slice(0, 80)}...`);
+  startClaude(Bun.env.AGENT_TASK);
+}
