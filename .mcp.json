@@ -1,12 +1,7 @@
 {
   "mcpServers": {
     "agent": {
-      "command": "bun",
-      "args": ["image/channel/agent-channel.ts"],
-      "env": {
-        "ORCHESTRATOR_HOME": "/Users/luetgers.andrew/dev-agents/orchestrator",
-        "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}"
-      }
+      "command": "./scripts/start-channel.sh"
     }
   }
 }

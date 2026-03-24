@@ -131,9 +131,16 @@ async function spawnAgent(
     "-e", "CI=true",
   ];
 
-  // Pass Claude Code auth from orchestrator environment
-  if (process.env.ANTHROPIC_API_KEY) {
-    args.push("-e", `ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY}`);
+  // Pass Claude Code auth — fetch fresh from keychain (SSO keys rotate)
+  let apiKey = process.env.ANTHROPIC_API_KEY;
+  try {
+    const result = Bun.spawnSync(["security", "find-generic-password", "-s", "Claude Code", "-w"]);
+    const freshKey = result.stdout.toString().trim();
+    if (freshKey) apiKey = freshKey;
+  } catch { /* fall back to env var */ }
+
+  if (apiKey) {
+    args.push("-e", `ANTHROPIC_API_KEY=${apiKey}`);
   }
 
   // Mount project repo and env if specified
