@@ -143,16 +143,19 @@ async function spawnAgent(
     args.push("-e", `ANTHROPIC_API_KEY=${apiKey}`);
   }
 
-  // Mount project repo and env if specified
+  // Clone project repo into agent's workspace (not bind-mount)
+  // Each agent gets its own copy so it can't affect the host working tree
+  let cloneUrl = "";
   if (project && config.projects[project]) {
     const proj = config.projects[project];
 
-    // Mount the project repo into the workspace
     if (proj.localPath && existsSync(proj.localPath)) {
-      args.push("-v", `${proj.localPath}:/home/agent/workspace`);
+      // Mount host repo read-only as clone source (fast, no network)
+      cloneUrl = proj.localPath;
+      args.push("-v", `${proj.localPath}:/tmp/repo-source:ro`);
     }
 
-    // Pass database URLs etc from the env files
+    // Pass env vars from .env file
     const envPath = join(proj.localPath || "", ".env");
     if (existsSync(envPath)) {
       args.push("--env-file", envPath);
@@ -190,6 +193,23 @@ async function spawnAgent(
   ]);
   const chanMatch = chanResult.stdout.match(/:(\d+)/);
   const channelPort = chanMatch ? parseInt(chanMatch[1], 10) : 0;
+
+  // Clone project into the agent's workspace
+  // We mount the host repo read-only at /tmp/repo-source and clone from there
+  // so the agent gets its own independent copy
+  if (cloneUrl) {
+    const wsCheck = await run([
+      "docker", "exec", `dev-${agentId}`,
+      "bash", "-c", "[ -d /home/agent/workspace/.git ] && echo exists || echo empty",
+    ]);
+    if (wsCheck.stdout.includes("empty")) {
+      // Clone from the mounted source into the workspace
+      await run([
+        "docker", "exec", `dev-${agentId}`,
+        "git", "clone", "/tmp/repo-source", "/home/agent/workspace",
+      ]);
+    }
+  }
 
   const info: AgentInfo = {
     containerId,
