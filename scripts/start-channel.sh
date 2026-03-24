@@ -9,4 +9,7 @@ if [ -z "$ANTHROPIC_API_KEY" ]; then
   exit 1
 fi
 
+# Kill any stale process on the channel port
+lsof -ti:8788 | xargs kill -9 2>/dev/null
+
 exec bun "$(dirname "$0")/../image/channel/agent-channel.ts"
