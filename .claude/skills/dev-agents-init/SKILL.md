@@ -23,6 +23,7 @@ Create these tasks at the start:
 8. **Claude Code auth test** — verify Claude Code is authenticated on the host
 9. **Docker socket access** — check ECI settings for Docker socket allowlisting
 10. **Verify end-to-end** — spawn a test agent, health check, tear down
+11. **Register orchestrator MCP server** — add channel at user scope so it works from any directory
 
 ## Procedure
 
@@ -273,12 +274,29 @@ docker rm -f dev-test-agent
 rm -rf ~/dev-agents/test-agent
 ```
 
-Report results. If everything passed: "Setup complete! To start the orchestrator, run:
+Report results.
 
+### 11. Register orchestrator MCP server
+
+Add the orchestrator channel as a **user-scoped** MCP server so it's available from any directory:
+
+```bash
+claude mcp add --scope user agent -- /path/to/dev-agents/scripts/start-channel.sh
 ```
-cd /path/to/dev-agents
-claude --dangerously-load-development-channels server:agent
-```"
+
+The `start-channel.sh` script:
+- Extracts a fresh API key from the macOS Keychain (handles SSO rotation)
+- Sets `ORCHESTRATOR_HOME` to `~/dev-agents/orchestrator`
+- Launches `agent-channel.ts` via bun
+
+This means `claude` started from **any project directory** will have the orchestrator tools available (`spawn_agent`, `message`, `dispatch`, `approve`, `deny`, `list_agents`).
+
+Verify it's registered:
+```bash
+claude mcp list
+```
+
+If everything passed: "Setup complete! Start a new Claude Code session from any project directory. The orchestrator channel loads automatically — use `spawn_agent` to create agents."
 
 ## Notes
 
