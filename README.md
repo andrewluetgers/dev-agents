@@ -1,263 +1,224 @@
 # dev-agents
 
-Isolated AI coding agent orchestration via Docker and Claude Code Channels.
+Orchestrate isolated AI coding agents via Docker and Claude Code Channels. Agents work autonomously in sandboxed containers while an orchestrator manages permissions, communication, and quality gates. Inspired by [OpenAI's Symphony](https://github.com/openai/symphony) and [harness engineering](https://openai.com/index/harness-engineering/) methodology.
 
-Spin up sandboxed workstations for AI coding agents, each with their own persistent home directory, repo clone, and environment. An MCP channel server pushes events directly into your Claude Code session — no polling.
+## Requirements
 
-## Architecture
+- **Docker Desktop** with Compose v2+ (Enhanced Container Isolation supported)
+- **Claude Code** v2.1.80+ — authenticated via claude.ai (SSO works)
+- **Node.js** 22+
+- **Git**
 
-```
-┌──────────────────────────────────────────────────────────┐
-│  Host                                                    │
-│                                                          │
-│  Claude Code (orchestrator)                              │
-│    │  MCP tools: spawn_agent, dispatch, reply, ...       │
-│    │  Channel events: ◄── push from agents               │
-│    │                                                     │
-│    └── agent-channel.ts (:8788)                          │
-│          │                                               │
-│  ┌───────┴──────────────────────────────────────┐        │
-│  │ ~/dev-agents/                                │        │
-│  │   ├── orchestrator/config.json               │        │
-│  │   ├── shared/            (read-only to all)  │        │
-│  │   ├── agent-1/           (agent-1's home)    │        │
-│  │   ├── agent-2/           (agent-2's home)    │        │
-│  │   └── ...                                    │        │
-│  └──────────────────────────────────────────────┘        │
-│          │              │              │                  │
-│    ┌─────┴─────┐  ┌────┴─────┐  ┌────┴─────┐            │
-│    │ Container  │  │ Container │  │ Container │           │
-│    │ agent-1    │  │ agent-2   │  │ agent-N   │           │
-│    │ :auto port │  │ :auto port│  │ :auto port│           │
-│    └───────────┘  └──────────┘  └──────────┘            │
-└──────────────────────────────────────────────────────────┘
-```
-
-### Key principles
-
-- **One agent, one container.** Always isolated. No thinking about when to isolate — just do it.
-- **Persistent home directories.** Each agent's home lives on the host at `~/dev-agents/<agent-id>/`. Survives container removal. New container + same mount = warm restart.
-- **Push, not poll.** Agents push events to the orchestrator via HTTP webhook. The channel server delivers them into your Claude Code session as MCP notifications.
-- **Auto-assigned ports.** Docker picks a free host port for each container. Zero conflicts, zero management.
-- **Shared data is read-only.** Env files, datasets, and other shared resources mount read-only. Agents work in their own home directory.
-
-## Directory layout
-
-### Host (`~/dev-agents/`)
-
-```
-~/dev-agents/
-  ├── orchestrator/
-  │   └── config.json          ← project registry, image name, defaults
-  ├── shared/                  ← read-only data available to all agents
-  │   └── (datasets, reference files, etc.)
-  ├── agent-1/                 ← agent-1's home (mounted as /home/agent)
-  │   ├── workspace/           ← repo clone
-  │   ├── .claude/             ← agent's Claude settings/memory
-  │   └── .local/share/pnpm/  ← pnpm cache
-  └── agent-2/                 ← fully isolated from agent-1
-      └── ...
-```
-
-### Container (`/home/agent/`)
-
-```
-/home/agent/                   ← mounted from ~/dev-agents/<agent-id>
-  ├── workspace/               ← repo clone (read-write)
-  ├── shared/                  ← mounted from ~/dev-agents/shared (read-only)
-  ├── env/                     ← project .env files (read-only)
-  ├── data/                    ← project data dirs (read-only)
-  └── ...
-
-/opt/agent-server/             ← command server (baked into image, not mounted)
-  ├── server.js
-  └── package.json
-```
-
-## Setup
-
-### Prerequisites
-
-- Docker with Compose v2+
-- [Bun](https://bun.sh) (for the channel server)
-- [Claude Code](https://claude.ai/claude-code) v2.1.80+
-- Claude Code authenticated via claude.ai login (SSO works)
-
-### 1. Clone this repo
+## Getting Started
 
 ```bash
+# 1. Clone this repo
 git clone https://github.com/andrewluetgers/dev-agents.git
 cd dev-agents
+
+# 2. Run the setup skill — it handles everything else interactively
+claude
+/dev-agents-init
 ```
 
-### 2. Install channel dependencies
+The `/dev-agents-init` skill walks you through:
+- Installing prerequisites (Bun, az CLI, gcloud if needed)
+- Building the Docker image (detects your UID and corporate certs automatically)
+- Creating `~/dev-agents/` with orchestrator config and memory
+- Registering your projects
+- Setting up auth (Azure DevOps, GCP) via browser OAuth
+- Verifying the full stack end-to-end
+
+After setup, onboard a project:
 
 ```bash
-cd channel && bun install && cd ..
+/onboard-project ~/dev/my-project
 ```
 
-### 3. Build the agent image
+This assesses the project's agent readiness, creates `.dev-agents/` config files, scores legibility, and produces a gap closure plan.
+
+## How It Works
+
+```
+You
+  │
+  └── Claude Code (orchestrator)
+        │  Spawns agents, approves permissions, manages work
+        │
+        ├── Agent 1 (Docker container)
+        │     Claude Code session working autonomously
+        │     Pushes results/questions back to orchestrator
+        │
+        ├── Agent 2 (Docker container)
+        │     Different project, fully isolated
+        │
+        └── Agent N ...
+```
+
+**One agent, one container, always.** Each agent gets a persistent home directory on the host at `~/dev-agents/<agent-id>/`. Containers come and go; the home directory survives.
+
+**Push, not poll.** Agents push events to the orchestrator via webhook. The orchestrator pushes messages into agents' Claude sessions via MCP channels. Bidirectional, low latency.
+
+**Orchestrator as user proxy.** The orchestrator holds the user's intent and makes decisions on their behalf — approving permissions, answering questions, redirecting agents that go off-track.
+
+## Running the Orchestrator
 
 ```bash
-docker build -t dev-agent:latest ./image
-
-# With a corporate CA cert (for SSL-inspecting proxies):
-cp /path/to/your-ca.crt image/ca-cert.crt
-docker build -t dev-agent:latest ./image
-
-# With a custom UID (match your host user):
-docker build -t dev-agent:latest --build-arg AGENT_UID=$(id -u) ./image
-```
-
-### 4. Create your config
-
-```bash
-mkdir -p ~/dev-agents/orchestrator ~/dev-agents/shared
-cp config.example.json ~/dev-agents/orchestrator/config.json
-```
-
-Edit `~/dev-agents/orchestrator/config.json` with your projects:
-
-```json
-{
-  "agentImage": "dev-agent:latest",
-  "homesDir": "/Users/you/dev-agents",
-  "channelPort": 8788,
-  "defaults": {
-    "memory": "4g",
-    "agentUid": 504
-  },
-  "projects": {
-    "my-app": {
-      "repo": "https://github.com/you/my-app.git",
-      "localPath": "/Users/you/dev/my-app",
-      "env": [".env", ".env.local"],
-      "data": {
-        "datasets": "/Users/you/data/ml-datasets"
-      }
-    }
-  }
-}
-```
-
-### 5. Start the orchestrator
-
-```bash
+cd ~/dev/dev-agents
 claude --dangerously-load-development-channels server:agent
 ```
 
-This starts Claude Code with the channel server. The channel listens on port 8788 for agent push events and exposes MCP tools to Claude.
-
-## Usage
-
-Once the orchestrator is running, Claude has these tools:
+The orchestrator has these MCP tools:
 
 | Tool | Description |
 |------|-------------|
-| `spawn_agent` | Create a new agent container with a persistent home directory |
+| `spawn_agent` | Create a new agent container for a project |
 | `stop_agent` | Stop an agent (home directory persists for warm restart) |
-| `dispatch` | Run a command in an agent container |
-| `reply` | Respond to an agent's question |
-| `list_agents` | Show all agents with ports, projects, and status |
+| `dispatch` | Run a shell command in an agent container |
+| `message` | Push a message into an agent's Claude session |
+| `reply` | Answer an agent's question |
+| `approve` / `deny` | Approve or deny an agent's permission request |
+| `list_agents` | Show all agents with status |
 
-### Spawn an agent
+## Permission Management
 
-Tell Claude: *"Spin up an agent for the cohort-search project."*
+Agents run without `--dangerously-skip-permissions`. Every tool use goes through the orchestrator for approval:
 
-Claude calls `spawn_agent` with `name: "auth-work"` and `project: "cohort-search"`. The channel:
-1. Creates `~/dev-agents/auth-work/`
-2. Starts a container with that directory as `/home/agent`
-3. Mounts `.env` files and data directories from the project config
-4. Docker assigns a free port automatically
-5. The agent boots, announces itself via push
+- **Auto-approve**: reads, builds, tests, linting, git add/commit
+- **Review**: branch switching, external network, database operations
+- **Always deny + escalate**: force push, `rm -rf`, pipeline changes, publishing
 
-### Dispatch work
+After every denial, the orchestrator explains why and suggests alternatives. See [the full policy](channel/agent-channel.ts) in the orchestrator instructions.
 
-Tell Claude: *"Have auth-work run the test suite."*
+## Project Integration
 
-Claude calls `dispatch` with `agent: "auth-work"` and `command: "cd workspace && pnpm test"`.
-
-### Receive push events
-
-When an agent pushes an event (status update, result, error, question), it arrives in your Claude Code session as:
+Each project that agents work on has a `.dev-agents/` directory (committed to the repo):
 
 ```
-<channel source="agent" agent="auth-work" type="result">
-All 136 tests passed.
-</channel>
+my-project/.dev-agents/
+  ├── config.json       ← env vars, skills, branch config
+  ├── memory.md         ← architecture, people, decisions, gotchas
+  ├── WORKFLOW.md       ← how agents handle work items (Symphony pattern)
+  └── LEGIBILITY.md     ← agent readiness scorecard + gap closure plan
 ```
 
-Claude sees this and can take action — dispatch more work, reply to questions, or report to you.
+## Execution Phases
 
-### Warm restart
+Agents work through structured phases with gates between them:
 
-```
-# Agent's container dies or you stop it
-# Home directory persists at ~/dev-agents/auth-work/
+1. **Research** — read code, tests, docs (agent solo)
+2. **Plan** — propose approach, get approval (interactive with user)
+3. **Execute** — implement in small commits (agent solo)
+4. **Verify** — run deterministic gates: typecheck, test, lint (agent solo)
+5. **Deliver** — push branch, report completion (agent solo)
 
-# Tell Claude: "Restart auth-work"
-# spawn_agent with the same name — picks up where it left off
-```
+Two key touch points require user involvement:
+- **Planning** — collaborative back-and-forth before coding
+- **Harness engineering** — when the system itself needs improvement
 
-## Agent command server
+## Architecture
 
-Each container runs a lightweight HTTP server on port 9111 (mapped to an auto-assigned host port).
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Agent status, ID, workspace path |
-| `/exec` | POST | Run a command: `{"command": "...", "timeout": 120000}` |
-| `/notify` | POST | Push event to channel: `{"type": "result", "content": "..."}` |
-| `/ask` | POST | Ask the orchestrator a question (blocks until reply): `{"prompt": "..."}` |
-| `/respond` | POST | Deliver a reply from the orchestrator: `{"response": "..."}` |
-
-## Communication flow
+### Host Layout
 
 ```
-Orchestrator (Claude Code)           Agent Container
+~/dev-agents/                         ← not in git
+  ├── orchestrator/
+  │   ├── config.json                 ← image, homes dir, project pointers
+  │   └── memory.md                   ← user prefs, auth, cross-project notes
+  ├── shared/                         ← read-only to all agents
+  │   ├── skills/                     ← ADO boards, pipelines, gcloud, etc.
+  │   └── templates/                  ← agent role templates
+  └── <agent-id>/                     ← per-agent home (mounted as /home/agent)
+      └── workspace/                  ← repo clone
+```
+
+### Container Layout
+
+```
+/home/agent/                          ← mounted from ~/dev-agents/<agent-id>
+  ├── workspace/                      ← repo clone (read-write)
+  ├── shared/                         ← from ~/dev-agents/shared (read-only)
+  └── env/                            ← project .env files (read-only)
+
+/opt/agent/                           ← baked into image (not mounted)
+  ├── server.ts                       ← command server + agent channel
+  └── agent-channel.ts                ← orchestrator channel (orchestrator mode)
+```
+
+### Communication
+
+```
+Orchestrator                          Agent Container
   │                                       │
-  ├── spawn_agent ──────────────────────► boots
-  │                                       ├── POST :8788 (status: ready)
-  │  ◄── <channel agent="x" type="status"> ──┘
+  ├── spawn_agent ──────────────────────► boots, announces via push
+  ├── dispatch (command) ───────────────► /exec → returns result
+  ├── message (text) ───────────────────► injected into Claude session
   │                                       │
-  ├── dispatch (command) ───────────────► /exec
-  │  ◄── result ──────────────────────────┘
+  │  ◄── push: status/result/error ───────┤ agent pushes events
+  │  ◄── push: permission_request ────────┤ agent needs approval
+  ├── approve/deny ─────────────────────► verdict relayed to Claude
   │                                       │
-  │                                       ├── POST :8788 (type: prompt)
-  │  ◄── <channel agent="x" type="prompt"> ──┘
-  ├── reply (text) ─────────────────────► /respond
-  │                                       │
-  │                                       ├── POST :8788 (type: result)
-  │  ◄── <channel agent="x" type="result"> ──┘
+  │  ◄── push: prompt (question) ─────────┤ agent asks a question
+  ├── reply (answer) ───────────────────► unblocks agent's /ask call
 ```
+
+## Shared Skills
+
+Reusable skills available to all agents:
+
+| Skill | Description |
+|-------|-------------|
+| `ado-boards` | Query, update, create, link ADO work items |
+| `ado-pipelines` | Approve, monitor ADO pipeline runs |
+| `gcloud` | GCP auth, storage, Cloud Run, Cloud SQL, logging |
+| `example-reviewer` | Code review from a git diff |
+
+Skills follow a consistent pattern: `config.json` (env + auth + permissions) + `SKILL.md` (instructions).
+
+## Harness Engineering
+
+When agents struggle, it's a signal the **harness** needs work — not just the agent. The orchestrator tracks failure patterns and escalates to the user for harness engineering sessions.
+
+Harness improvements compound: fix a legibility gap or add a golden principle, and every future agent run benefits.
+
+Key principles:
+1. Documentation is the table of contents, not the encyclopedia
+2. Golden principles are enforced, not suggested
+3. Code design is context
+4. Deterministic gates before LLM evaluation
+5. Structured execution phases
+6. Entropy management (the meta-loop)
+7. Application legibility (project-specific, assessed via `/onboard-project`)
+
+See [docs/SYMPHONY-PLAN.md](docs/SYMPHONY-PLAN.md) for the full implementation plan.
 
 ## Files
 
 ```
 dev-agents/
   ├── image/
-  │   ├── Dockerfile           ← agent container image
-  │   ├── server.js            ← command server (zero deps, ESM)
-  │   └── package.json         ← declares "type": "module"
+  │   ├── Dockerfile              ← agent container (worker + orchestrator modes)
+  │   ├── server.ts               ← command server + agent channel (Bun)
+  │   └── channel/                ← orchestrator channel (baked into image)
   ├── channel/
-  │   ├── agent-channel.ts     ← MCP channel + orchestration tools
-  │   └── package.json         ← bun project with @modelcontextprotocol/sdk
-  ├── .mcp.json                ← registers channel with Claude Code
-  └── config.example.json      ← template for ~/dev-agents/orchestrator/config.json
+  │   └── agent-channel.ts        ← MCP channel + tools + permission policy
+  ├── skills/                     ← shared skills (ado-boards, gcloud, etc.)
+  ├── templates/                  ← agent role templates (base-agent, researcher)
+  ├── docs/
+  │   └── SYMPHONY-PLAN.md        ← implementation plan
+  ├── .claude/skills/
+  │   ├── dev-agents-init/        ← /dev-agents-init — first-time user setup
+  │   └── onboard-project/        ← /onboard-project — project readiness assessment
+  ├── .mcp.json                   ← registers channel with Claude Code
+  └── config.example.json         ← template for orchestrator config
 ```
 
-## When to use multiple agents
+## When to Use Multiple Agents
 
-A single container can run multiple Claude sessions, use git worktrees, and parallelize commands. You don't need a new container just for parallelism.
+A single container can run multiple Claude sessions and parallelize commands. You don't need a new container just for parallelism.
 
 **Use a new container when:**
-- **Conflicting environments** — different dependency versions, destructive migrations
-- **Resource isolation** — memory-heavy work that shouldn't OOM-kill other agents
-- **Different projects** — separate repos with separate stacks
-- **Blast radius** — risky or experimental work you want sandboxed
-
-**Within one container, an agent can:**
-- Run multiple Claude CLI sessions
-- Work on multiple git branches via worktrees
-- Run parallel commands (typecheck + tests + dev server)
-- Do research while writing code
+- Conflicting environments (different dependency versions)
+- Resource isolation (memory-heavy work)
+- Different projects entirely
+- Blast radius (risky/experimental work)
