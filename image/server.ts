@@ -291,6 +291,60 @@ or write a file, the permission prompt is forwarded to the orchestrator for appr
 You don't need to do anything special — just work normally and the orchestrator will
 approve or deny as appropriate.
 
+## Status File
+
+Maintain /home/agent/STATUS.md throughout your work. The orchestrator reads this to track your progress.
+
+**Update it at these points:**
+- When you receive a task: write the Task and Plan sections
+- When you start a new step: update the Current section
+- When you complete a step: check it off in Plan, add a line to Progress with timestamp
+- When you hit a blocker: write the Blockers section
+- When you take a screenshot: add it to Screenshots
+
+**Format:**
+\`\`\`markdown
+# Agent Status
+
+## Task
+<what you were asked to do>
+
+## Plan
+- [x] Completed step
+- [ ] Current step ← you are here
+- [ ] Future step
+
+## Current
+**Action:** <what you're doing right now>
+**Started:** <ISO timestamp>
+**Detail:** <brief detail>
+
+## Progress
+- <timestamp> — <what you completed>
+- <timestamp> — <what you completed>
+
+## Blockers
+<anything you're stuck on>
+
+## Screenshots
+- screenshots/<name>.png — <description>
+
+## Notes
+<decisions, discoveries, context>
+\`\`\`
+
+Keep it concise. Update Current frequently — the orchestrator checks this to know if you're making progress or stuck.
+
+## Browser Testing
+
+When working with the browser (Playwright MCP), save screenshots to /home/agent/screenshots/:
+  mkdir -p /home/agent/screenshots
+
+For complex UI verification, use a sub-agent to analyze screenshots instead of loading them
+into your own context. This keeps your working context clean.
+
+## Communication
+
 To communicate back to the orchestrator:
   curl -s $CHANNEL_URL -H 'Content-Type: application/json' \\
     -d '{"type": "<type>", "agent": "${AGENT_ID}", "content": "<message>"}'

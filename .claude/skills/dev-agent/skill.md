@@ -70,13 +70,10 @@ Arguments: `/dev-agent status [agent-name]`
 
 1. Call `mcp__agent__list_agents`
 2. If an agent name was given, filter to just that agent
-3. For each agent, also call `mcp__agent__dispatch(agent: "<name>", command: "curl -s localhost:9111/health")` to get live health
-4. Show a concise summary:
-   ```
-   cs-playwright (cohort-search) — running
-     Port: 55010 | Channel: 55011 | Health: ok
-     Claude session: active | Pending permissions: 0
-   ```
+3. For each agent, call `mcp__agent__dispatch(agent: "<name>", command: "cat /home/agent/STATUS.md 2>/dev/null || echo 'No status file yet'")`
+4. Show the status file contents — this is the primary view of what the agent is doing
+5. If no STATUS.md exists, fall back to a basic health check:
+   `mcp__agent__dispatch(agent: "<name>", command: "curl -s localhost:9111/health")`
 
 ### Action: Message
 
