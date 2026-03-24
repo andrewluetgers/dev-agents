@@ -1,19 +1,12 @@
 {
   "mcpServers": {
     "agent": {
-      "command": "docker",
-      "args": [
-        "run", "-i", "--rm",
-        "--name", "dev-orchestrator",
-        "-v", "/var/run/docker.sock:/var/run/docker.sock",
-        "-v", "~/dev-agents/orchestrator:/home/agent",
-        "-v", "~/dev-agents/shared:/home/agent/shared:ro",
-        "-p", "8788:8788",
-        "--add-host", "host.docker.internal:host-gateway",
-        "-e", "ORCHESTRATOR_HOME=/home/agent",
-        "dev-agent:latest",
-        "bun", "/opt/agent-channel/agent-channel.ts"
-      ]
+      "command": "bun",
+      "args": ["image/channel/agent-channel.ts"],
+      "env": {
+        "ORCHESTRATOR_HOME": "/Users/luetgers.andrew/dev-agents/orchestrator",
+        "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}"
+      }
     }
   }
 }

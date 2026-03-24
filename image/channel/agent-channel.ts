@@ -97,6 +97,13 @@ async function spawnAgent(
   // Create home directory if it doesn't exist
   mkdirSync(join(homeDir, "workspace"), { recursive: true });
 
+  // Pre-seed onboarding skip for Claude Code
+  const claudeJson = join(homeDir, ".claude.json");
+  if (!existsSync(claudeJson)) {
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(claudeJson, JSON.stringify({ hasCompletedOnboarding: true }));
+  }
+
   // Build docker run args
   const args = [
     "docker",
@@ -104,49 +111,38 @@ async function spawnAgent(
     "-d",
     "--name",
     `dev-${agentId}`,
-    // Auto-assign host port
-    "-p",
-    "0:9111",
-    "--add-host",
-    "host.docker.internal:host-gateway",
+    // Auto-assign host ports for command server and channel
+    "-p", "0:9111",
+    "-p", "0:9222",
+    "--add-host", "host.docker.internal:host-gateway",
+    // Docker socket + group for orchestrator-capable agents
+    "--group-add", "0",
+    "-v", "/var/run/docker.sock:/var/run/docker.sock",
     // Agent's home directory
-    "-v",
-    `${homeDir}:/home/agent`,
+    "-v", `${homeDir}:/home/agent`,
     // Shared read-only data
-    "-v",
-    `${sharedDir}:/home/agent/shared:ro`,
+    "-v", `${sharedDir}:/home/agent/shared:ro`,
     // Memory limit
-    "--memory",
-    config.defaults.memory || "4g",
+    "--memory", config.defaults.memory || "8g",
     // Environment
-    "-e",
-    `AGENT_ID=${agentId}`,
-    "-e",
-    `CHANNEL_URL=http://host.docker.internal:${CHANNEL_PORT}`,
-    "-e",
-    "NODE_ENV=development",
-    "-e",
-    "CI=true",
+    "-e", `AGENT_ID=${agentId}`,
+    "-e", `CHANNEL_URL=http://host.docker.internal:${CHANNEL_PORT}`,
+    "-e", "NODE_ENV=development",
+    "-e", "CI=true",
   ];
 
-  // Mount project env files if specified
+  // Pass Claude Code auth from orchestrator environment
+  if (process.env.ANTHROPIC_API_KEY) {
+    args.push("-e", `ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY}`);
+  }
+
+  // Mount project repo and env if specified
   if (project && config.projects[project]) {
     const proj = config.projects[project];
 
-    // Database/service env vars from .env files
-    for (const envFile of proj.env) {
-      const envPath = join(proj.localPath || "", envFile);
-      if (existsSync(envPath)) {
-        mkdirSync(join(homeDir, "env"), { recursive: true });
-        args.push("-v", `${envPath}:/home/agent/env/${envFile}:ro`);
-      }
-    }
-
-    // Data directories
-    for (const [name, hostPath] of Object.entries(proj.data)) {
-      if (existsSync(hostPath)) {
-        args.push("-v", `${hostPath}:/home/agent/data/${name}:ro`);
-      }
+    // Mount the project repo into the workspace
+    if (proj.localPath && existsSync(proj.localPath)) {
+      args.push("-v", `${proj.localPath}:/home/agent/workspace`);
     }
 
     // Pass database URLs etc from the env files

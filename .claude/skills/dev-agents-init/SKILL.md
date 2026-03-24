@@ -60,9 +60,18 @@ Check if the user has a corporate CA cert (Zscaler, etc.):
 
 Ask: "Does your network use a corporate SSL proxy (like Zscaler)? If so, provide the path to the CA certificate file. If not, just say no."
 
-If yes, copy the cert to `image/ca-cert.crt` before building.
+If yes, export the cert from the system keychain (macOS):
 
 ```bash
+security find-certificate -c "Zscaler Root CA" -p /Library/Keychains/System.keychain > ./image/ca-cert.crt
+```
+
+If not on macOS, ask for the cert file path and copy it to `image/ca-cert.crt`.
+
+**Important:** Pull a fresh base image before building. ECI validates Docker socket access by comparing image layer digests against the registry. A stale base image causes silent validation failures in step 9.
+
+```bash
+docker pull node:22-slim
 docker build -t dev-agent:latest --build-arg AGENT_UID={uid} ./image
 ```
 
@@ -99,7 +108,13 @@ For each project path:
 1. Verify the path exists
 2. Extract the project name from the directory name
 3. Check if `.dev-agents/` exists in the repo
-4. If not, ask if they want to create it with a basic config and empty memory
+4. If not, tell the user to run `/onboard-project` in that repo to set it up:
+   ```
+   cd <project-path>
+   claude
+   /onboard-project
+   ```
+   The onboard-project skill must run FROM the project directory so it has full codebase context. Do NOT run it from the dev-agents orchestrator repo.
 5. Add the project to the orchestrator's config.json
 
 ### 6. Azure DevOps auth (optional)
@@ -134,29 +149,96 @@ If yes:
 claude --version
 ```
 
-Tell the user: "Claude Code is installed. Each agent container will need its own `claude login` the first time — I'll walk you through that when you spawn your first agent."
+**Container auth via macOS Keychain:**
+
+Claude Code stores a managed API key in the macOS Keychain under service name "Claude Code". Extract it and pass as `ANTHROPIC_API_KEY` when spawning containers:
+
+```bash
+TOKEN=$(security find-generic-password -s "Claude Code" -w)
+docker run -e ANTHROPIC_API_KEY="$TOKEN" ...
+```
+
+Test that it works inside a container:
+
+```bash
+TOKEN=$(security find-generic-password -s "Claude Code" -w)
+docker run --rm -e ANTHROPIC_API_KEY="$TOKEN" dev-agent:latest claude auth status
+```
+
+Containers also need `~/.claude.json` with `{"hasCompletedOnboarding": true}` pre-seeded in the agent's home directory to skip the interactive onboarding wizard.
+
+Note: `claude setup-token` and interactive `claude auth login` inside containers may not work with corporate/Teams accounts. The Keychain extraction approach is the reliable path.
 
 ### 9. Docker socket access
 
-Check if Enhanced Container Isolation is blocking Docker socket mounts:
+The orchestrator container needs Docker socket access to spawn sibling agent containers.
+Two things must be configured: ECI allowlisting and Unix socket permissions.
+
+**Test Docker socket access:**
 
 ```bash
-docker run --rm -v /var/run/docker.sock:/var/run/docker.sock dev-agent:latest docker ps 2>&1
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock --group-add 0 dev-agent:latest docker ps 2>&1
 ```
 
-If it fails with "Docker socket mount denied":
+Note: `--group-add 0` is required because Docker Desktop mounts the socket as `root:root` inside the container. The agent user needs the root group to read it.
 
-Tell the user: "Docker Desktop's Enhanced Container Isolation is blocking Docker socket access for the agent image. To fix this:
+If it succeeds, report: "Docker socket access works." and move on.
 
-1. Open Docker Desktop → Settings
-2. Go to Resources → Advanced (or search for Enhanced Container Isolation)
-3. Find the Docker socket image list
-4. Add `dev-agent:latest`
-5. Apply & Restart Docker Desktop
+#### ECI allowlisting
 
-Let me know when you've done this and I'll retry."
+If it fails with "Docker socket mount denied", ECI is blocking the agent image.
 
-If it succeeds, report: "Docker socket access works."
+ECI's Docker socket access is controlled via an `admin-settings.json` file, NOT through Docker Desktop's UI settings panel. The file goes at:
+
+- **macOS**: `/Library/Application Support/com.docker.docker/admin-settings.json` (requires sudo)
+- **Windows**: `C:\ProgramData\Docker\admin-settings.json`
+- **Linux**: `/usr/share/docker-desktop/admin-settings.json`
+
+Reference: https://docs.docker.com/enterprise/security/hardened-desktop/enhanced-container-isolation/config/
+
+**The reference config is at `image/admin-settings.json` in this repo.** The approach:
+
+- Allowlist the Dockerfile's base image (`node:22-slim`) and set `allowDerivedImages: true`
+- This lets any locally built image derived FROM that base access the socket
+- ECI validates by comparing digests against the registry, so the base image must be fresh
+
+**Setup steps:**
+
+1. Pull a fresh base image first — stale digests cause silent validation failures:
+   ```bash
+   docker pull node:22-slim
+   ```
+
+2. Rebuild the agent image so its layer lineage matches the fresh base:
+   ```bash
+   docker build -t dev-agent:latest --build-arg AGENT_UID={uid} ./image
+   ```
+
+3. Install the admin-settings.json (requires sudo — have the user run this themselves).
+
+   **Do NOT blindly overwrite** — the user may have an existing file with other settings.
+
+   First check if it already exists:
+   ```bash
+   cat "/Library/Application Support/com.docker.docker/admin-settings.json" 2>/dev/null
+   ```
+
+   - If it **doesn't exist**: copy our reference file directly:
+     ```bash
+     sudo mkdir -p "/Library/Application Support/com.docker.docker"
+     sudo cp ./image/admin-settings.json "/Library/Application Support/com.docker.docker/admin-settings.json"
+     ```
+
+   - If it **already exists**: read both files, deep-merge the `enhancedContainerIsolation` key from our reference into the existing file (preserving other keys), write the merged result to a temp file, then have the user `sudo cp` it into place. Use `jq` or `python3 -c 'import json, sys; ...'` for the merge.
+
+4. Fully quit and reopen Docker Desktop (the file is only read at startup).
+
+5. Retry the socket test.
+
+If it still fails after all this, the org may be enforcing ECI via MDM and overriding local admin-settings. In that case:
+
+1. Tell the user to contact their Docker admin to add the base image to the org's socket allowlist in the Admin Console.
+2. Note that worker agents don't need the socket — only the orchestrator does. Setup can continue without it.
 
 ### 10. Verify end-to-end
 
@@ -168,7 +250,9 @@ mkdir -p ~/dev-agents/test-agent/workspace
 docker run -d --name dev-test-agent \
   -p 0:9111 \
   --add-host host.docker.internal:host-gateway \
+  --group-add 0 \
   -v ~/dev-agents/test-agent:/home/agent \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   -e AGENT_ID=test-agent \
   -e CI=true \
   --memory 4g \

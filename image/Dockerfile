@@ -22,16 +22,20 @@ FROM node:22-slim
 # Place your cert at image/ca-cert.crt before building. If absent, this is a no-op.
 COPY ca-cert.cr[t] /usr/local/share/ca-certificates/custom-ca.crt
 
-# Dev tools + Docker CLI (orchestrator needs it to spawn sibling containers)
+# Dev tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
     procps \
     sudo \
     ca-certificates \
-    docker.io \
   && rm -rf /var/lib/apt/lists/* \
   && update-ca-certificates
+
+# Docker CLI — official static binary (the debian docker.io package is too old for Docker Desktop)
+ARG DOCKER_CLI_VERSION=27.5.1
+RUN curl -fsSL "https://download.docker.com/linux/static/stable/$(uname -m)/docker-${DOCKER_CLI_VERSION}.tgz" \
+  | tar xz --strip-components=1 -C /usr/local/bin docker/docker
 
 # Set CA env immediately so all subsequent npm/bun installs trust the proxy
 ENV NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/custom-ca.crt
@@ -42,6 +46,13 @@ RUN npm install -g bun
 # pnpm — for project work inside the container
 ARG PNPM_VERSION=10.30.3
 RUN npm install -g pnpm@${PNPM_VERSION}
+
+# Claude Code — so agents can run claude sessions autonomously
+RUN npm install -g @anthropic-ai/claude-code
+
+# Playwright MCP — browser automation for agents (accessibility-tree based, not screenshots)
+# Install Playwright + Chromium with system dependencies
+RUN npx playwright install --with-deps chromium
 
 # Non-root user — UID should match host user for bind mount permissions
 ARG AGENT_UID=1000

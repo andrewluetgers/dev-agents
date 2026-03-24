@@ -1,0 +1,17 @@
+{
+  "configurationFileVersion": 2,
+  "enhancedContainerIsolation": {
+    "locked": true,
+    "value": true,
+    "dockerSocketMount": {
+      "imageList": {
+        "images": ["node:22-slim"],
+        "allowDerivedImages": true
+      },
+      "commandList": {
+        "type": "deny",
+        "commands": ["push"]
+      }
+    }
+  }
+}
