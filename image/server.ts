@@ -10,6 +10,12 @@
 //
 
 import { appendFileSync, writeFileSync } from "node:fs";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import {
+  ListToolsRequestSchema,
+  CallToolRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 
 const CMD_PORT = parseInt(Bun.env.AGENT_PORT || "9111", 10);
 const CHANNEL_PORT = parseInt(Bun.env.AGENT_CHANNEL_PORT || "9222", 10);
@@ -18,6 +24,163 @@ const AGENT_ID = Bun.env.AGENT_ID || "agent-1";
 const CHANNEL_URL = Bun.env.CHANNEL_URL || "";
 const LOG_FILE = "/home/agent/claude-session.log";
 const STATUS_FILE = "/home/agent/STATUS.md";
+
+// --- MCP server over HTTP (channel + permission relay) ---
+
+const mcpServer = new Server(
+  { name: `agent-${AGENT_ID}`, version: "0.3.0" },
+  {
+    capabilities: {
+      experimental: {
+        "claude/channel": {},
+        "claude/channel/permission": {},
+      },
+      tools: {},
+    },
+    instructions: `You are agent "${AGENT_ID}" working under an orchestrator.
+
+Messages from the orchestrator arrive as <channel> events. Read them and act accordingly.
+If the orchestrator tells you to stop or change direction, comply immediately.
+
+## Status File
+
+Maintain /home/agent/STATUS.md throughout your work. The orchestrator reads this to track your progress.
+
+Update it at these points:
+- When you receive a task: write the Task and Plan sections
+- When you start a new step: update the Current section
+- When you complete a step: check it off in Plan, add to Progress
+- When you hit a blocker: write the Blockers section
+
+## Browser Testing
+
+When working with the browser (Playwright MCP), save screenshots to /home/agent/screenshots/.
+For complex UI verification, use a sub-agent to analyze screenshots.`,
+  }
+);
+
+// MCP tools the agent's Claude can call
+const mcpTools = [
+  {
+    name: "ask_orchestrator",
+    description: "Ask the orchestrator a question. Blocks until the orchestrator responds.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        question: { type: "string", description: "Your question for the orchestrator" },
+      },
+      required: ["question"],
+    },
+  },
+  {
+    name: "report_status",
+    description: "Push a structured status update to the orchestrator.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        status: { type: "string", description: "Current status: working, blocked, done, error" },
+        message: { type: "string", description: "Brief description of what you're doing" },
+      },
+      required: ["status", "message"],
+    },
+  },
+];
+
+mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: mcpTools }));
+
+mcpServer.setRequestHandler(CallToolRequestSchema, async (req) => {
+  const { name, arguments: args } = req.params;
+  const a = (args || {}) as Record<string, any>;
+
+  if (name === "ask_orchestrator") {
+    await pushToOrchestrator("prompt", a.question);
+    const response = await new Promise<string>((resolve) => {
+      pendingReply = resolve;
+      setTimeout(() => {
+        if (pendingReply === resolve) {
+          pendingReply = null;
+          resolve("(timeout: no response from orchestrator)");
+        }
+      }, 300_000);
+    });
+    return { content: [{ type: "text" as const, text: response }] };
+  }
+
+  if (name === "report_status") {
+    await pushToOrchestrator("status", `[${a.status}] ${a.message}`);
+    return { content: [{ type: "text" as const, text: "Status reported." }] };
+  }
+
+  return { content: [{ type: "text" as const, text: `Unknown tool: ${name}` }] };
+});
+
+// Permission relay state
+const pendingPermissions = new Map<string, (verdict: "allow" | "deny") => void>();
+
+// MCP transport — one per session (stateful)
+let mcpTransport: WebStandardStreamableHTTPServerTransport | null = null;
+
+// Permission request notification handler — register on raw message level
+// because the SDK may not have typed schemas for claude/channel notifications
+function setupPermissionRelay(transport: WebStandardStreamableHTTPServerTransport) {
+  const originalOnMessage = transport.onmessage;
+  transport.onmessage = async (message, extra) => {
+    // Check for permission_request notifications
+    if (
+      "method" in message &&
+      message.method === "notifications/claude/channel/permission_request" &&
+      "params" in message
+    ) {
+      const params = message.params as {
+        request_id: string;
+        tool_name: string;
+        description: string;
+        input_preview: string;
+      };
+
+      // Push to orchestrator
+      await pushToOrchestrator("permission_request", params.description, {
+        permission: {
+          request_id: params.request_id,
+          tool_name: params.tool_name,
+          description: params.description,
+          input_preview: params.input_preview,
+        },
+      });
+
+      // Wait for verdict
+      const verdict = await new Promise<"allow" | "deny">((resolve) => {
+        pendingPermissions.set(params.request_id, resolve);
+        setTimeout(() => {
+          if (pendingPermissions.has(params.request_id)) {
+            pendingPermissions.delete(params.request_id);
+            resolve("deny");
+          }
+        }, 300_000);
+      });
+
+      // Send verdict back via MCP notification
+      try {
+        await mcpServer.notification({
+          method: "notifications/claude/channel/permission" as any,
+          params: {
+            request_id: params.request_id,
+            behavior: verdict,
+          },
+        });
+      } catch (err: any) {
+        console.error(`Permission verdict delivery failed: ${err.message}`);
+      }
+
+      return; // Don't pass to default handler
+    }
+
+    // Pass through to default handler
+    if (originalOnMessage) {
+      originalOnMessage(message, extra);
+    }
+  };
+}
 
 // --- Push to orchestrator (only for important events) ---
 
@@ -169,9 +332,13 @@ async function startClaude(initialPrompt?: string) {
     "--model", Bun.env.CLAUDE_MODEL || "sonnet",
   ];
 
-  // Add MCP config for Playwright if available
+  // MCP servers: channel (permission relay + tools) + Playwright (browser)
   const mcpConfig = {
     mcpServers: {
+      channel: {
+        type: "http",
+        url: `http://localhost:${CHANNEL_PORT}/mcp`,
+      },
       playwright: {
         command: "npx",
         args: ["@playwright/mcp@latest", "--headless", "--browser", "chromium"],
@@ -399,7 +566,7 @@ Bun.serve({
   },
 });
 
-// --- Channel server (:9222) — message injection ---
+// --- Channel server (:9222) — message injection + MCP over HTTP ---
 
 Bun.serve({
   port: CHANNEL_PORT,
@@ -413,10 +580,12 @@ Bun.serve({
         agent: AGENT_ID,
         sessionActive,
         session: sessionState,
+        mcpConnected: mcpTransport !== null,
+        pendingPermissions: pendingPermissions.size,
       });
     }
 
-    // Inject a message into Claude's session (like /btw)
+    // Inject a message into Claude's session via stream-json stdin (like /btw)
     if (req.method === "POST" && url.pathname === "/message") {
       const body = (await req.json()) as {
         content?: string;
@@ -433,6 +602,41 @@ Bun.serve({
       return Response.json({
         status: sent ? "injected" : "send_failed",
       });
+    }
+
+    // Permission verdict from orchestrator
+    if (req.method === "POST" && url.pathname === "/permission") {
+      const body = (await req.json()) as {
+        request_id?: string;
+        verdict?: "allow" | "deny";
+      };
+      if (!body.request_id || !body.verdict) {
+        return Response.json(
+          { error: "request_id and verdict are required" },
+          { status: 400 }
+        );
+      }
+
+      const resolve = pendingPermissions.get(body.request_id);
+      if (resolve) {
+        resolve(body.verdict);
+        pendingPermissions.delete(body.request_id);
+        return Response.json({ status: "verdict_delivered", request_id: body.request_id });
+      }
+      return Response.json({ status: "no_pending_request", request_id: body.request_id });
+    }
+
+    // MCP over HTTP — channel + permission relay + tools
+    if (url.pathname === "/mcp") {
+      if (!mcpTransport) {
+        mcpTransport = new WebStandardStreamableHTTPServerTransport({
+          sessionIdGenerator: () => crypto.randomUUID(),
+        });
+        setupPermissionRelay(mcpTransport);
+        await mcpServer.connect(mcpTransport);
+        logLine(JSON.stringify({ type: "server", event: "mcp_connected", timestamp: new Date().toISOString() }));
+      }
+      return mcpTransport.handleRequest(req);
     }
 
     return Response.json({ error: "not found" }, { status: 404 });

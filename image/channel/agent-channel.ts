@@ -648,8 +648,9 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "approve": {
         const info = agents.get(a.agent);
         if (!info) return text(`Agent "${a.agent}" not found.`);
+        const port = info.channelPort || info.hostPort;
         try {
-          const resp = await fetch(`http://localhost:${info.hostPort}/permission`, {
+          const resp = await fetch(`http://localhost:${port}/permission`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ request_id: a.request_id, verdict: "allow" }),
@@ -664,8 +665,9 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "deny": {
         const info = agents.get(a.agent);
         if (!info) return text(`Agent "${a.agent}" not found.`);
+        const port = info.channelPort || info.hostPort;
         try {
-          const resp = await fetch(`http://localhost:${info.hostPort}/permission`, {
+          const resp = await fetch(`http://localhost:${port}/permission`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ request_id: a.request_id, verdict: "deny" }),
