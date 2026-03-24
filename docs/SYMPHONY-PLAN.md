@@ -108,6 +108,12 @@ When agents struggle, it's a signal that the **harness** needs work — not just
 
 Harness engineering is the user's job, with orchestrator assistance. It's working ON the system, not IN the system. These sessions are the most valuable — they compound across every future agent run.
 
+### 7. Application Legibility
+
+The best orchestrator can't help an agent that can't see what's happening. Each project should maintain a legibility checklist at `.dev-agents/LEGIBILITY.md` that tracks: can the agent run the app, see what it does, verify changes, navigate the code, and query the environment.
+
+This is project-specific, not part of the orchestration system. But it's core to success — every legibility gap is a place where agents get stuck and need human help. See the cohort-search repo for an example.
+
 This is the **meta-loop** — the system improves itself over time.
 
 ### 7. Depth-First, Not Breadth-First
