@@ -1,5 +1,5 @@
 ---
-name: agents
+name: list-agents
 description: List all running dev agents with their status, projects, and ports.
 user-invocable: true
 ---
@@ -10,7 +10,7 @@ Show all running dev agents.
 
 ## Usage
 
-`/agents`
+`/list-agents`
 
 ## Procedure
 
