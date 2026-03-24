@@ -433,6 +433,11 @@ const tools = [
           description:
             "Project name from config.json, a local path (e.g. ~/dev/my-repo), a git URL (e.g. https://github.com/org/repo), or 'new' for an empty repo.",
         },
+        task: {
+          type: "string",
+          description:
+            "Initial task for the agent. Claude Code starts immediately with this prompt. If omitted, the agent starts idle and waits for a message.",
+        },
       },
     },
   },
@@ -546,12 +551,42 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "spawn_agent": {
         const agentId = a.name || `agent-${nextAgentNum++}`;
         const info = await spawnAgent(agentId, a.project);
+
+        // Start Claude Code inside the agent if a task was given
+        if (a.task) {
+          // Wait for the server to be ready
+          let ready = false;
+          for (let i = 0; i < 10; i++) {
+            try {
+              const resp = await fetch(`http://localhost:${info.hostPort}/health`);
+              if (resp.ok) { ready = true; break; }
+            } catch {}
+            await new Promise(r => setTimeout(r, 1000));
+          }
+
+          if (ready) {
+            try {
+              await fetch(`http://localhost:${info.hostPort}/start`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ prompt: a.task }),
+              });
+            } catch (err: any) {
+              return text(
+                `Spawned ${agentId} but failed to start Claude: ${err.message}\n` +
+                `  Port: ${info.hostPort}`
+              );
+            }
+          }
+        }
+
         return text(
           `Spawned ${agentId}\n` +
             `  Container: ${info.containerId}\n` +
             `  Port: ${info.hostPort}\n` +
             `  Home: ${info.homeDir}\n` +
-            `  Project: ${info.project || "(none)"}`
+            `  Project: ${info.project || "(none)"}\n` +
+            `  Claude: ${a.task ? "started with task" : "idle (use message to send task)"}`
         );
       }
 
