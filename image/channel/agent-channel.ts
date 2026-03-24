@@ -143,22 +143,41 @@ async function spawnAgent(
     args.push("-e", `ANTHROPIC_API_KEY=${apiKey}`);
   }
 
-  // Clone project repo into agent's workspace (not bind-mount)
-  // Each agent gets its own copy so it can't affect the host working tree
-  let cloneUrl = "";
-  if (project && config.projects[project]) {
-    const proj = config.projects[project];
+  // Determine repo source — registered project, local path, git URL, or new
+  let repoSource: { type: "local" | "git" | "new"; path?: string } = { type: "new" };
+  let localPath = "";
 
-    if (proj.localPath && existsSync(proj.localPath)) {
-      // Mount host repo read-only as clone source (fast, no network)
-      cloneUrl = proj.localPath;
-      args.push("-v", `${proj.localPath}:/tmp/repo-source:ro`);
+  if (project) {
+    if (project === "new") {
+      repoSource = { type: "new" };
+    } else if (config.projects[project]) {
+      // Registered project name
+      localPath = config.projects[project].localPath;
+      if (localPath && existsSync(localPath)) {
+        repoSource = { type: "local", path: localPath };
+        args.push("-v", `${localPath}:/tmp/repo-source:ro`);
+      }
+    } else if (project.startsWith("http") || project.startsWith("git@") || project.includes("github.com")) {
+      // Git URL
+      repoSource = { type: "git", path: project };
+    } else {
+      // Assume local path — expand ~ if needed
+      const expanded = project.replace(/^~/, process.env.HOME || "");
+      if (existsSync(expanded)) {
+        localPath = expanded;
+        repoSource = { type: "local", path: expanded };
+        args.push("-v", `${expanded}:/tmp/repo-source:ro`);
+      } else {
+        throw new Error(`Project not found: ${project} — not a registered project, valid path, or git URL`);
+      }
     }
 
-    // Pass env vars from .env file
-    const envPath = join(proj.localPath || "", ".env");
-    if (existsSync(envPath)) {
-      args.push("--env-file", envPath);
+    // Pass env vars from .env if we have a local path
+    if (localPath) {
+      const envPath = join(localPath, ".env");
+      if (existsSync(envPath)) {
+        args.push("--env-file", envPath);
+      }
     }
   }
 
@@ -194,21 +213,38 @@ async function spawnAgent(
   const chanMatch = chanResult.stdout.match(/:(\d+)/);
   const channelPort = chanMatch ? parseInt(chanMatch[1], 10) : 0;
 
-  // Clone project into the agent's workspace
-  // We mount the host repo read-only at /tmp/repo-source and clone from there
-  // so the agent gets its own independent copy
-  if (cloneUrl) {
-    const wsCheck = await run([
-      "docker", "exec", `dev-${agentId}`,
-      "bash", "-c", "[ -d /home/agent/workspace/.git ] && echo exists || echo empty",
-    ]);
-    if (wsCheck.stdout.includes("empty")) {
-      // Clone from the mounted source into the workspace
+  // Set up the agent's workspace based on repo source
+  const wsCheck = await run([
+    "docker", "exec", `dev-${agentId}`,
+    "bash", "-c", "[ -d /home/agent/workspace/.git ] && echo exists || echo empty",
+  ]);
+
+  if (wsCheck.stdout.includes("empty")) {
+    if (repoSource.type === "local") {
+      // Clone from the read-only mounted host repo (fast, no network)
       await run([
         "docker", "exec", `dev-${agentId}`,
         "git", "clone", "/tmp/repo-source", "/home/agent/workspace",
       ]);
+    } else if (repoSource.type === "git") {
+      // Clone from remote URL
+      await run([
+        "docker", "exec", `dev-${agentId}`,
+        "git", "clone", "--depth", "1", repoSource.path!, "/home/agent/workspace",
+      ]);
+    } else {
+      // New empty repo
+      await run([
+        "docker", "exec", `dev-${agentId}`,
+        "bash", "-c", "cd /home/agent/workspace && git init",
+      ]);
     }
+
+    // Configure git identity inside the agent
+    await run([
+      "docker", "exec", `dev-${agentId}`,
+      "bash", "-c", `cd /home/agent/workspace && git config user.name "dev-${agentId}" && git config user.email "${agentId}@dev-agents.local"`,
+    ]);
   }
 
   const info: AgentInfo = {
@@ -395,7 +431,7 @@ const tools = [
         project: {
           type: "string",
           description:
-            "Project name from config.json. Mounts env files and data directories for that project.",
+            "Project name from config.json, a local path (e.g. ~/dev/my-repo), a git URL (e.g. https://github.com/org/repo), or 'new' for an empty repo.",
         },
       },
     },
