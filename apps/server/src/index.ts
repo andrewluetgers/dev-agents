@@ -5,7 +5,8 @@ import { RPCHandler } from "@orpc/server/fetch";
 import { router, type Context } from "@dev-agents/rpc";
 import type { AgentInfo, AgentEvent } from "@dev-agents/shared";
 import { getLoops, startLoop, stopLoop, syncLoops } from "./loops.js";
-import * as pty from "node-pty";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const PORT = parseInt(process.env.PORT || "8788", 10);
 
@@ -124,11 +125,11 @@ app.get("/api/agents/:id/stream", async (c) => {
 app.use("/*", serveStatic({ root: "../web/dist" }));
 app.get("/*", serveStatic({ path: "../web/dist/index.html" }));
 
-// --- Terminal sessions (real PTY via node-pty) ---
+// --- Terminal sessions (PTY via Node.js bridge subprocess) ---
 
 interface WsData {
   type: "events" | "terminal";
-  ptyProcess?: pty.IPty;
+  bridge?: ReturnType<typeof Bun.spawn>;
 }
 
 // --- Start ---
@@ -158,51 +159,72 @@ const server = Bun.serve<WsData>({
       if (ws.data.type === "events") {
         wsClients.add(ws as any);
       } else if (ws.data.type === "terminal") {
-        // Spawn a real PTY — proper newlines, interactive shell, resize support
-        const shell = process.env.SHELL || "/bin/zsh";
-        const ptyProcess = pty.spawn(shell, ["-l"], {
-          name: "xterm-256color",
-          cols: 120,
-          rows: 40,
-          cwd: process.env.HOME || "/tmp",
-          env: process.env as Record<string, string>,
+        // Spawn Node.js PTY bridge (node-pty doesn't work in Bun)
+        const bridgePath = join(dirname(fileURLToPath(import.meta.url)), "pty-bridge.mjs");
+        const bridge = Bun.spawn(["node", bridgePath], {
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "pipe",
+          env: { ...process.env, COLS: "120", ROWS: "40" },
         });
-        ws.data.ptyProcess = ptyProcess;
+        ws.data.bridge = bridge;
 
-        // PTY output → WebSocket
-        ptyProcess.onData((data: string) => {
-          try { ws.send(data); } catch {}
-        });
-
-        ptyProcess.onExit(() => {
+        // Bridge stdout (JSON lines) → WebSocket
+        const reader = bridge.stdout.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        (async () => {
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buf += decoder.decode(value, { stream: true });
+              const lines = buf.split("\n");
+              buf = lines.pop() || "";
+              for (const line of lines) {
+                if (!line.trim()) continue;
+                try {
+                  const msg = JSON.parse(line);
+                  if (msg.type === "output") {
+                    ws.send(msg.data);
+                  } else if (msg.type === "exit") {
+                    ws.close();
+                  }
+                } catch {}
+              }
+            }
+          } catch {}
           try { ws.close(); } catch {}
-        });
+        })();
       }
     },
     message(ws, msg) {
-      if (ws.data.type === "terminal" && ws.data.ptyProcess) {
+      if (ws.data.type === "terminal" && ws.data.bridge) {
         const data = typeof msg === "string" ? msg : new TextDecoder().decode(msg as ArrayBuffer);
+        const stdin = ws.data.bridge.stdin as any;
 
-        // Check for resize messages
+        // Check for resize messages (already JSON)
         if (data.startsWith("{")) {
           try {
             const parsed = JSON.parse(data);
-            if (parsed.type === "resize" && parsed.cols && parsed.rows) {
-              ws.data.ptyProcess.resize(parsed.cols, parsed.rows);
+            if (parsed.type === "resize") {
+              stdin.write(new TextEncoder().encode(JSON.stringify(parsed) + "\n"));
+              stdin.flush();
               return;
             }
           } catch {}
         }
 
-        // Forward user input to the PTY
-        ws.data.ptyProcess.write(data);
+        // Forward user input to the bridge
+        stdin.write(new TextEncoder().encode(JSON.stringify({ type: "input", data }) + "\n"));
+        stdin.flush();
       }
     },
     close(ws) {
       if (ws.data.type === "events") {
         wsClients.delete(ws as any);
-      } else if (ws.data.type === "terminal" && ws.data.ptyProcess) {
-        ws.data.ptyProcess.kill();
+      } else if (ws.data.type === "terminal" && ws.data.bridge) {
+        ws.data.bridge.kill();
       }
     },
   },
