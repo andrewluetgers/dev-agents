@@ -241,8 +241,7 @@ async function execCommand(
 // --- Claude Code session (stream-json) ---
 
 let claudeProc: ReturnType<typeof Bun.spawn> | null = null;
-let claudeStdin: WritableStream | null = null;
-let claudeWriter: WritableStreamDefaultWriter | null = null;
+let claudeStdinSink: { write(data: Uint8Array): number; flush(): void } | null = null;
 let sessionActive = false;
 
 // SSE clients watching the live stream
@@ -332,7 +331,7 @@ async function startClaude(initialPrompt?: string) {
     "--model", Bun.env.CLAUDE_MODEL || "sonnet",
   ];
 
-  // MCP servers: channel (permission relay + tools) + Playwright (browser)
+  // Write MCP config to file — Claude Code expects a file path, not inline JSON
   const mcpConfig = {
     mcpServers: {
       channel: {
@@ -345,7 +344,9 @@ async function startClaude(initialPrompt?: string) {
       },
     },
   };
-  args.push("--mcp-config", JSON.stringify(mcpConfig));
+  const mcpConfigPath = "/tmp/agent-mcp.json";
+  writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig));
+  args.push("--mcp-config", mcpConfigPath);
 
   logLine(JSON.stringify({ type: "server", event: "starting_claude", args, timestamp: new Date().toISOString() }));
 
@@ -357,8 +358,8 @@ async function startClaude(initialPrompt?: string) {
     stderr: "pipe",
   });
 
-  claudeStdin = claudeProc.stdin as WritableStream;
-  claudeWriter = claudeStdin.getWriter();
+  // Bun.spawn stdin is a FileSink, not a WritableStream
+  claudeStdinSink = claudeProc.stdin as any;
 
   // Read stdout line by line
   const reader = claudeProc.stdout.getReader();
@@ -410,14 +411,15 @@ async function startClaude(initialPrompt?: string) {
 }
 
 async function sendMessage(content: string): Promise<boolean> {
-  if (!claudeWriter || !sessionActive) return false;
+  if (!claudeStdinSink || !sessionActive) return false;
   const msg = JSON.stringify({
     type: "user",
     message: { role: "user", content },
   }) + "\n";
 
   try {
-    await claudeWriter.write(new TextEncoder().encode(msg));
+    claudeStdinSink.write(new TextEncoder().encode(msg));
+    claudeStdinSink.flush();
     logLine(JSON.stringify({ type: "server", event: "message_sent", content: content.slice(0, 200) }));
     return true;
   } catch (err: any) {
