@@ -1,6 +1,9 @@
 node_modules/
 *.lock
 bun.lock
+pnpm-lock.yaml
 .env
 image/ca-cert.crt
 /.idea/
+dist/
+.turbo/
