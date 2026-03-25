@@ -120,18 +120,96 @@ app.get("/api/agents/:id/stream", async (c) => {
 app.use("/*", serveStatic({ root: "../web/dist" }));
 app.get("/*", serveStatic({ path: "../web/dist/index.html" }));
 
+// --- Terminal sessions (pty for orchestrator CLI) ---
+
+interface WsData {
+  type: "events" | "terminal";
+  pty?: ReturnType<typeof Bun.spawn>;
+}
+
 // --- Start ---
 
-const server = Bun.serve({
+const server = Bun.serve<WsData>({
   port: PORT,
-  fetch: app.fetch,
+  fetch(req, server) {
+    const url = new URL(req.url);
+
+    // WebSocket upgrade for events
+    if (url.pathname === "/api/ws") {
+      const upgraded = server.upgrade(req, { data: { type: "events" } });
+      return upgraded ? undefined : new Response("Upgrade failed", { status: 400 });
+    }
+
+    // WebSocket upgrade for terminal
+    if (url.pathname === "/api/terminal") {
+      const upgraded = server.upgrade(req, { data: { type: "terminal" } });
+      return upgraded ? undefined : new Response("Upgrade failed", { status: 400 });
+    }
+
+    // Everything else goes through Hono
+    return app.fetch(req, server);
+  },
   websocket: {
     open(ws) {
-      wsClients.add(ws);
+      if (ws.data.type === "events") {
+        wsClients.add(ws as any);
+      } else if (ws.data.type === "terminal") {
+        // Spawn a shell with claude available
+        const pty = Bun.spawn(["bash", "-l"], {
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "pipe",
+          env: {
+            ...process.env,
+            TERM: "xterm-256color",
+            COLUMNS: "120",
+            LINES: "40",
+          },
+        });
+        ws.data.pty = pty;
+
+        // Pipe stdout to WebSocket
+        const reader = pty.stdout.getReader();
+        const decoder = new TextDecoder();
+        (async () => {
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              ws.send(decoder.decode(value));
+            }
+          } catch {}
+          ws.close();
+        })();
+
+        // Pipe stderr to WebSocket
+        const errReader = pty.stderr.getReader();
+        (async () => {
+          try {
+            while (true) {
+              const { done, value } = await errReader.read();
+              if (done) break;
+              ws.send(decoder.decode(value));
+            }
+          } catch {}
+        })();
+      }
     },
-    message() {},
+    message(ws, msg) {
+      if (ws.data.type === "terminal" && ws.data.pty) {
+        // Forward user input to the shell
+        const stdin = ws.data.pty.stdin as any;
+        const data = typeof msg === "string" ? msg : new TextDecoder().decode(msg as ArrayBuffer);
+        stdin.write(new TextEncoder().encode(data));
+        stdin.flush();
+      }
+    },
     close(ws) {
-      wsClients.delete(ws);
+      if (ws.data.type === "events") {
+        wsClients.delete(ws as any);
+      } else if (ws.data.type === "terminal" && ws.data.pty) {
+        ws.data.pty.kill();
+      }
     },
   },
 });
