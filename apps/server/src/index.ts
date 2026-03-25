@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serveStatic } from "hono/bun";
-import { RPCHandler } from "@orpc/server/node";
+import { RPCHandler } from "@orpc/server/fetch";
 import { router, type Context } from "@dev-agents/rpc";
 import type { AgentInfo, AgentEvent } from "@dev-agents/shared";
 
@@ -25,12 +25,12 @@ function buildContext(): Context {
 
 app.use("/api/rpc/*", async (c) => {
   const context = buildContext();
-  const { matched } = await rpcHandler.handle(c.req.raw, {
+  const { matched, response } = await rpcHandler.handle(c.req.raw, {
     prefix: "/api/rpc",
     context,
   });
-  if (matched) {
-    return new Response(null, { status: 200 }); // rpcHandler already sent response
+  if (matched && response) {
+    return response;
   }
   return c.json({ error: "RPC not matched" }, 404);
 });
