@@ -111,93 +111,85 @@ app.get("/api/ws", upgradeWebSocket(() => ({
   },
 })));
 
-// --- WebSocket: terminal PTY ---
+// --- Orchestrator container (started once at server init, persists) ---
+
+function ensureOrchestratorContainer() {
+  const home = process.env.HOME || "/tmp";
+  const apiKey = getApiKey();
+  const fs = require("node:fs") as typeof import("node:fs");
+
+  // Write MCP config
+  const mcpPath = `${home}/dev-agents/orchestrator/.mcp.json`;
+  fs.writeFileSync(mcpPath, JSON.stringify({
+    mcpServers: {
+      agent: {
+        command: "bun",
+        args: ["/opt/agent/agent-channel.ts"],
+        env: {
+          ORCHESTRATOR_HOME: "/home/agent/dev-agents/orchestrator",
+          ANTHROPIC_API_KEY: apiKey,
+        },
+      },
+    },
+  }));
+
+  // Pre-seed onboarding
+  const claudeJson = `${home}/dev-agents/orchestrator/.claude.json`;
+  if (!fs.existsSync(claudeJson)) {
+    fs.writeFileSync(claudeJson, JSON.stringify({ hasCompletedOnboarding: true }));
+  }
+
+  // Check if already running
+  try {
+    const out = execSync("docker inspect -f '{{.State.Running}}' dev-orchestrator-tty 2>/dev/null", { encoding: "utf8" });
+    if (out.trim() === "true") {
+      console.log("Orchestrator container already running");
+      return;
+    }
+  } catch {}
+
+  // Start it
+  try { execSync("docker rm -f dev-orchestrator-tty 2>/dev/null"); } catch {}
+  const result = spawnSync("docker", [
+    "run", "-d",
+    "--name", "dev-orchestrator-tty",
+    "-v", `${home}/dev-agents:/home/agent/dev-agents`,
+    "-v", "/var/run/docker.sock:/var/run/docker.sock",
+    "--add-host", "host.docker.internal:host-gateway",
+    "--group-add", "0",
+    "-p", "8789:8788",
+    "-e", `ANTHROPIC_API_KEY=${apiKey}`,
+    "-e", "AGENT_ID=orchestrator",
+    "-e", "HOME=/home/agent",
+    "-e", "ORCHESTRATOR_HOME=/home/agent/dev-agents/orchestrator",
+    "-e", "CLAUDE_CONFIG_DIR=/home/agent/dev-agents/orchestrator/.claude",
+    "-w", "/home/agent/dev-agents/orchestrator",
+    "--memory", "8g",
+    "dev-agent:latest",
+    "sleep", "infinity",
+  ], { encoding: "utf8" });
+
+  if (result.status !== 0) {
+    console.error("Failed to start orchestrator container:", result.stderr);
+  } else {
+    console.log("Started orchestrator container:", result.stdout.trim().slice(0, 12));
+  }
+}
+
+// --- WebSocket: terminal PTY (just attaches to running container) ---
 
 app.get("/api/terminal", upgradeWebSocket(() => {
   let term: pty.IPty | null = null;
 
   return {
     onOpen(_event, ws) {
-      const home = process.env.HOME || "/tmp";
-      const apiKey = getApiKey();
-
-      // Write MCP config so Claude inside the container gets the channel
-      const fs = require("node:fs");
-      const mcpPath = `${home}/dev-agents/orchestrator/.mcp.json`;
-      fs.writeFileSync(mcpPath, JSON.stringify({
-        mcpServers: {
-          agent: {
-            command: "bun",
-            args: ["/opt/agent/agent-channel.ts"],
-            env: {
-              ORCHESTRATOR_HOME: "/home/agent/dev-agents/orchestrator",
-              ANTHROPIC_API_KEY: apiKey,
-            },
-          },
-        },
-      }));
-
-      // Pre-seed onboarding skip
-      const claudeJson = `${home}/dev-agents/orchestrator/.claude.json`;
-      if (!fs.existsSync(claudeJson)) {
-        fs.writeFileSync(claudeJson, JSON.stringify({ hasCompletedOnboarding: true }));
-      }
-
-      // Check if orchestrator container is already running — attach instead of creating
-      let isRunning = false;
-      try {
-        const out = execSync("docker inspect -f '{{.State.Running}}' dev-orchestrator-tty 2>/dev/null", { encoding: "utf8" });
-        isRunning = out.trim() === "true";
-      } catch {}
-
-      if (!isRunning) {
-        // Start the container detached (survives browser tab close)
-        try { execSync("docker rm -f dev-orchestrator-tty 2>/dev/null"); } catch {}
-        const result = spawnSync("docker", [
-          "run", "-d",
-          "--name", "dev-orchestrator-tty",
-          "-v", `${home}/dev-agents:/home/agent/dev-agents`,
-          "-v", "/var/run/docker.sock:/var/run/docker.sock",
-          "--add-host", "host.docker.internal:host-gateway",
-          "--group-add", "0",
-          "-p", "8789:8788",
-          "-e", `ANTHROPIC_API_KEY=${apiKey}`,
-          "-e", "AGENT_ID=orchestrator",
-          "-e", "HOME=/home/agent",
-          "-e", "ORCHESTRATOR_HOME=/home/agent/dev-agents/orchestrator",
-          "-e", "CLAUDE_CONFIG_DIR=/home/agent/dev-agents/orchestrator/.claude",
-          "-w", "/home/agent/dev-agents/orchestrator",
-          "--memory", "8g",
-          "dev-agent:latest",
-          "sleep", "infinity",
-        ], { encoding: "utf8" });
-
-        if (result.status !== 0) {
-          console.error("Failed to start orchestrator container:", result.stderr);
-        } else {
-          console.log("Started orchestrator container:", result.stdout.trim().slice(0, 12));
-        }
-      }
-
-      // Wait for container to be ready
-      if (!isRunning) {
-        for (let i = 0; i < 10; i++) {
-          try {
-            const check = execSync("docker exec dev-orchestrator-tty echo ready 2>/dev/null", { encoding: "utf8" });
-            if (check.includes("ready")) break;
-          } catch {}
-          spawnSync("sleep", ["0.5"]);
-        }
-      }
-
-      // Attach to the container's shell via docker exec -it
+      // Just attach — container is already running
       term = pty.spawn("docker", [
         "exec", "-it", "dev-orchestrator-tty", "bash", "-l",
       ], {
         name: "xterm-256color",
         cols: 120,
         rows: 40,
-        cwd: home,
         env: process.env as Record<string, string>,
       });
 
@@ -226,7 +218,6 @@ app.get("/api/terminal", upgradeWebSocket(() => {
       term.write(data);
     },
     onClose() {
-      // Just detach — don't kill the container
       if (term) {
         term.kill();
         term = null;
@@ -291,6 +282,7 @@ function discoverAgents() {
 }
 
 discoverAgents();
+ensureOrchestratorContainer();
 
 // Sync loop intervals
 setInterval(() => syncLoops(agents), 2000);
