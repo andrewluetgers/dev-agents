@@ -158,7 +158,8 @@ const server = Bun.serve<WsData>({
         wsClients.add(ws as any);
       } else if (ws.data.type === "terminal") {
         // Spawn a shell with claude available
-        const pty = Bun.spawn(["bash", "-l"], {
+        // Force interactive bash with prompt
+        const pty = Bun.spawn(["bash", "-li"], {
           stdin: "pipe",
           stdout: "pipe",
           stderr: "pipe",
@@ -167,6 +168,7 @@ const server = Bun.serve<WsData>({
             TERM: "xterm-256color",
             COLUMNS: "120",
             LINES: "40",
+            PS1: "\\[\\033[1;34m\\]dev-agents\\[\\033[0m\\] \\w $ ",
           },
         });
         ws.data.pty = pty;

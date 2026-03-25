@@ -118,8 +118,8 @@ export function AgentDetail({ agentId }: { agentId: string }) {
           >
             <Icon size={12} />
             {label}
-            {badge && badge !== false && (
-              <span className="ml-1 bg-[var(--accent)] text-white text-[10px] px-1.5 py-0 rounded-full min-w-[16px] text-center">
+            {((typeof badge === "number" && badge > 0) || badge === true) && (
+              <span className="ml-1.5 bg-[var(--accent)] text-white text-[10px] px-1.5 py-0 rounded-full min-w-[16px] text-center">
                 {typeof badge === "number" ? (badge > 99 ? "99+" : badge) : ""}
               </span>
             )}
@@ -130,7 +130,7 @@ export function AgentDetail({ agentId }: { agentId: string }) {
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4">
         {tab === "status" && (
-          <MarkdownRenderer className="prose prose-invert prose-xs max-w-none text-[13px] leading-relaxed">
+          <MarkdownRenderer>
             {statusData?.markdown || "*No STATUS.md yet — agent hasn't started writing status updates.*"}
           </MarkdownRenderer>
         )}
