@@ -6,47 +6,46 @@ Built on Claude Code's stream-json and MCP channel protocols. Inspired by [cmux]
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  Host Machine                                                   │
-│                                                                 │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │  Host Server (:8788) — Node.js + Hono                    │   │
-│  │  /api/rpc/*      oRPC procedures (type-safe, Zod)        │   │
-│  │  /api/events     push event receiver from agents         │   │
-│  │  /api/ws         WebSocket for live dashboard events     │   │
-│  │  /api/terminal   WebSocket for orchestrator PTY (tmux)   │   │
-│  │  /*              dashboard SPA                           │   │
-│  └────────────────────────────┬─────────────────────────────┘   │
-│                               │                                 │
-│  ┌────────────────────────────▼─────────────────────────────┐   │
-│  │  Docker Containers                                        │   │
-│  │                                                           │   │
-│  │  ┌─────────────────────┐  ┌────────────────────┐         │   │
-│  │  │  Orchestrator        │  │  Agent Containers   │         │   │
-│  │  │  Claude Code in tmux │  │  Claude Code via    │         │   │
-│  │  │  + MCP channel       │  │  stream-json proxy  │         │   │
-│  │  │  ~/dev-agents/ mount │  │  :9111 cmd :9222 ch │         │   │
-│  │  └─────────────────────┘  └────────────────────┘         │   │
-│  └───────────────────────────────────────────────────────────┘   │
-│                                                                 │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │  ~/dev-agents/                                           │   │
-│  │  orchestrator/    config.json, CLAUDE.md, .mcp.json      │   │
-│  │  agent-1/         persistent home (workspace, logs)      │   │
-│  │  shared/          read-only shared data                  │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph Host["Host Machine"]
+        Server["Host Server :8788<br/>Node.js + Hono<br/>/api/rpc · /api/events · /api/ws · /api/terminal"]
 
-┌──────────────────────────────────────────────────────────────┐
-│  Browser — Dashboard (:5174)                                  │
-│  ┌──────────┬───────────────────────────────────────────┐    │
-│  │ Sidebar  │  Orchestrator: Terminal | Events           │    │
-│  │          │  Agent Detail: Status|Log|Changes|Docs|Loops│    │
-│  │ + Orch   │  Board: Kanban lanes                       │    │
-│  │ ● agent  │  Message input (always visible)            │    │
-│  └──────────┴───────────────────────────────────────────┘    │
-└──────────────────────────────────────────────────────────────┘
+        subgraph Docker["Docker Containers"]
+            Orch["Orchestrator<br/>Claude Code in tmux<br/>+ MCP channel<br/>~/dev-agents/ mount"]
+            Agent1["Agent Container<br/>Claude Code via stream-json<br/>:9111 cmd · :9222 channel"]
+            Agent2["Agent Container<br/>..."]
+        end
+
+        subgraph Storage["~/dev-agents/"]
+            OHome["orchestrator/<br/>config.json · CLAUDE.md"]
+            AHome["agent-1/ agent-2/<br/>workspace · logs · STATUS.md"]
+            Shared["shared/<br/>read-only data"]
+        end
+    end
+
+    subgraph Browser["Browser — Dashboard :5174"]
+        UI["Sidebar · Orchestrator Terminal · Agent Detail<br/>Status | Log | Changes | Docs | Loops<br/>Kanban Board · Message Input"]
+    end
+
+    Browser <-->|"oRPC · WebSocket · SSE"| Server
+    Server <-->|"PTY via tmux"| Orch
+    Server <-->|"HTTP push events"| Agent1
+    Server <-->|"HTTP push events"| Agent2
+    Orch ---|"Docker socket"| Agent1
+    Orch ---|"Docker socket"| Agent2
+    Orch --- OHome
+    Agent1 --- AHome
+
+    style Host fill:#1a1a1a,stroke:#2a2a2a,color:#fafafa
+    style Docker fill:#0d1117,stroke:#3b82f6,color:#fafafa
+    style Storage fill:#0d1117,stroke:#2a2a2a,color:#a0a0a0
+    style Browser fill:#0d1117,stroke:#22c55e,color:#fafafa
+    style Server fill:#1e293b,stroke:#3b82f6,color:#fafafa
+    style Orch fill:#1e293b,stroke:#eab308,color:#fafafa
+    style Agent1 fill:#1e293b,stroke:#22c55e,color:#fafafa
+    style Agent2 fill:#1e293b,stroke:#22c55e,color:#fafafa
+    style UI fill:#1e293b,stroke:#22c55e,color:#fafafa
 ```
 
 ## Features
