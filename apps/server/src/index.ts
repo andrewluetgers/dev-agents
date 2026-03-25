@@ -12,6 +12,16 @@ import * as pty from "@homebridge/node-pty-prebuilt-multiarch";
 
 const PORT = parseInt(process.env.PORT || "8788", 10);
 
+// Fetch API key from macOS Keychain (SSO keys rotate)
+function getApiKey(): string {
+  if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
+  try {
+    return execSync('security find-generic-password -s "Claude Code" -w', { encoding: "utf8" }).trim();
+  } catch {
+    return "";
+  }
+}
+
 const app = new Hono();
 const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
@@ -106,16 +116,36 @@ app.get("/api/ws", upgradeWebSocket(() => ({
 app.get("/api/terminal", upgradeWebSocket(() => {
   let term: pty.IPty | null = null;
 
+  // Kill any stale orchestrator container
+  try { execSync("docker rm -f dev-orchestrator-tty 2>/dev/null"); } catch {}
+
   return {
     onOpen(_event, ws) {
-      const orchestratorHome = process.env.ORCHESTRATOR_HOME ||
-        `${process.env.HOME}/dev-agents/orchestrator`;
-      // Start Claude Code as the orchestrator — not a raw shell
-      term = pty.spawn("claude", [], {
+      // Run the orchestrator in a Docker container — isolated from the host
+      // Mounts: orchestrator home, Docker socket, shared dir
+      // No access to host filesystem beyond these mounts
+      const home = process.env.HOME || "/tmp";
+      const apiKey = getApiKey();
+
+      term = pty.spawn("docker", [
+        "run", "-it", "--rm",
+        "--name", "dev-orchestrator-tty",
+        "-v", `${home}/dev-agents/orchestrator:/home/agent`,
+        "-v", `${home}/dev-agents/shared:/home/agent/shared:ro`,
+        "-v", "/var/run/docker.sock:/var/run/docker.sock",
+        "--add-host", "host.docker.internal:host-gateway",
+        "--group-add", "0",
+        "-e", `ANTHROPIC_API_KEY=${apiKey}`,
+        "-e", "AGENT_ID=orchestrator",
+        "-e", `HOME=/home/agent`,
+        "--memory", "8g",
+        "dev-agent:latest",
+        "claude",
+      ], {
         name: "xterm-256color",
         cols: 120,
         rows: 40,
-        cwd: orchestratorHome,
+        cwd: home,
         env: process.env as Record<string, string>,
       });
 
@@ -149,6 +179,8 @@ app.get("/api/terminal", upgradeWebSocket(() => {
         term.kill();
         term = null;
       }
+      // Clean up the container
+      try { execSync("docker rm -f dev-orchestrator-tty 2>/dev/null"); } catch {}
     },
   };
 }));
