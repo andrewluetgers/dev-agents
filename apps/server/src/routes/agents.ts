@@ -8,6 +8,85 @@ agentsRouter.get("/", (c) => {
   return c.json([...agents.values()]);
 });
 
+// Spawn a new agent
+agentsRouter.post("/", async (c) => {
+  const body = await c.req.json();
+  const { name, project, task } = body;
+  if (!name) return c.json({ error: "name is required" }, 400);
+
+  // TODO: integrate with agent-channel.ts spawn logic
+  // For now, delegate to Docker directly
+  try {
+    const args = [
+      "docker", "run", "-d",
+      "--name", `dev-${name}`,
+      "-p", "0:9111", "-p", "0:9222",
+      "--add-host", "host.docker.internal:host-gateway",
+      "--group-add", "0",
+      "-v", "/var/run/docker.sock:/var/run/docker.sock",
+      "-v", `${process.env.HOME}/dev-agents/${name}:/home/agent`,
+      "--memory", "8g",
+      "-e", `AGENT_ID=${name}`,
+      "-e", `CHANNEL_URL=http://host.docker.internal:8788/api/events`,
+      "-e", "NODE_ENV=development",
+      "-e", "CI=true",
+    ];
+
+    // Pass API key
+    if (process.env.ANTHROPIC_API_KEY) {
+      args.push("-e", `ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY}`);
+    }
+
+    args.push("dev-agent:latest");
+
+    const proc = Bun.spawnSync(args);
+    if (proc.exitCode !== 0) {
+      return c.json({ error: proc.stderr.toString() }, 500);
+    }
+
+    const containerId = proc.stdout.toString().trim().slice(0, 12);
+
+    // Get ports
+    await new Promise(r => setTimeout(r, 2000));
+    const portProc = Bun.spawnSync(["docker", "port", `dev-${name}`, "9111"]);
+    const portMatch = portProc.stdout.toString().match(/:(\d+)/);
+    const hostPort = portMatch ? parseInt(portMatch[1], 10) : 0;
+
+    const chanProc = Bun.spawnSync(["docker", "port", `dev-${name}`, "9222"]);
+    const chanMatch = chanProc.stdout.toString().match(/:(\d+)/);
+    const channelPort = chanMatch ? parseInt(chanMatch[1], 10) : 0;
+
+    agents.set(name, {
+      id: name,
+      containerId,
+      hostPort,
+      channelPort,
+      homeDir: `${process.env.HOME}/dev-agents/${name}`,
+      project: project || null,
+      status: "starting",
+      lastSeen: new Date().toISOString(),
+      task,
+    });
+
+    // Start Claude if task provided
+    if (task && hostPort) {
+      setTimeout(async () => {
+        try {
+          await fetch(`http://localhost:${hostPort}/start`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt: task }),
+          });
+        } catch {}
+      }, 3000);
+    }
+
+    return c.json({ status: "spawned", agent: name, port: hostPort, channelPort });
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
+});
+
 // Agent detail
 agentsRouter.get("/:id", (c) => {
   const info = agents.get(c.req.param("id"));

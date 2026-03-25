@@ -1,1 +1,1 @@
-export type { AgentInfo, AgentEvent, SessionState, ProjectConfig, OrchestratorConfig } from "./types.js";
+export type { AgentInfo, AgentEvent, SessionState, ProjectConfig, OrchestratorConfig, TaskCard, TaskLane } from "./types.js";

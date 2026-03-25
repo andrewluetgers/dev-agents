@@ -8,6 +8,7 @@ export interface AgentInfo {
   project: string | null;
   status: string;
   lastSeen: string;
+  task?: string;
 }
 
 // Events pushed from agents to orchestrator
@@ -49,4 +50,18 @@ export interface OrchestratorConfig {
     agentUid: number;
   };
   projects: Record<string, ProjectConfig>;
+}
+
+// Kanban task card
+export type TaskLane = "backlog" | "planning" | "in_progress" | "review" | "done";
+
+export interface TaskCard {
+  id: string;
+  title: string;
+  description: string;
+  lane: TaskLane;
+  project: string;
+  agentId?: string;
+  createdAt: string;
+  updatedAt: string;
 }
