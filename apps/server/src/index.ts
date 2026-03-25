@@ -7,7 +7,7 @@ import { RPCHandler } from "@orpc/server/fetch";
 import { router, type Context } from "@dev-agents/rpc";
 import type { AgentInfo, AgentEvent } from "@dev-agents/shared";
 import { getLoops, syncLoops } from "./loops.js";
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import * as pty from "@homebridge/node-pty-prebuilt-multiarch";
 
 const PORT = parseInt(process.env.PORT || "8788", 10);
@@ -153,8 +153,8 @@ app.get("/api/terminal", upgradeWebSocket(() => {
       if (!isRunning) {
         // Start the container detached (survives browser tab close)
         try { execSync("docker rm -f dev-orchestrator-tty 2>/dev/null"); } catch {}
-        execSync([
-          "docker", "run", "-d",
+        const result = spawnSync("docker", [
+          "run", "-d",
           "--name", "dev-orchestrator-tty",
           "-v", `${home}/dev-agents:/home/agent/dev-agents`,
           "-v", "/var/run/docker.sock:/var/run/docker.sock",
@@ -170,15 +170,24 @@ app.get("/api/terminal", upgradeWebSocket(() => {
           "--memory", "8g",
           "dev-agent:latest",
           "sleep", "infinity",
-        ].join(" "));
+        ], { encoding: "utf8" });
 
-        // Start Claude inside the running container
-        // Small delay for container to be ready
-        setTimeout(() => {
+        if (result.status !== 0) {
+          console.error("Failed to start orchestrator container:", result.stderr);
+        } else {
+          console.log("Started orchestrator container:", result.stdout.trim().slice(0, 12));
+        }
+      }
+
+      // Wait for container to be ready
+      if (!isRunning) {
+        for (let i = 0; i < 10; i++) {
           try {
-            execSync("docker exec -d dev-orchestrator-tty bash -c 'claude > /tmp/claude.log 2>&1'");
+            const check = execSync("docker exec dev-orchestrator-tty echo ready 2>/dev/null", { encoding: "utf8" });
+            if (check.includes("ready")) break;
           } catch {}
-        }, 1000);
+          spawnSync("sleep", ["0.5"]);
+        }
       }
 
       // Attach to the container's shell via docker exec -it
