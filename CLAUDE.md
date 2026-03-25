@@ -41,11 +41,27 @@ image/           — Docker image (agent server + Dockerfile)
 scripts/         — Orchestrator startup scripts
 ```
 
-## Commands
+## Development
+
+### Running the servers
 
 ```bash
-pnpm dev                          # Start server + dashboard
-pnpm --filter @dev-agents/server dev   # Server only
-pnpm --filter @dev-agents/web dev      # Dashboard only
+pnpm dev                                # Start server + dashboard (via turbo)
+pnpm --filter @dev-agents/server dev    # Server only (:8788)
+pnpm --filter @dev-agents/web dev       # Dashboard only (:5174)
 docker build -t dev-agent:latest --build-arg AGENT_UID=$(id -u) ./image  # Rebuild agent image
 ```
+
+The host server (:8788) starts the orchestrator Docker container automatically. The dashboard (:5174) proxies API calls to the server.
+
+### Working on dev-agents itself
+
+**Do NOT develop this project through the orchestrator.** The orchestrator runs inside a Docker container that depends on the host server. Restarting the server kills the orchestrator's connection. This is a recursive dependency — you can't fix the system from inside the system.
+
+Work on this project directly in Claude Code on the host:
+```bash
+cd ~/dev/dev-agents
+claude
+```
+
+The orchestrator is for managing OTHER projects' agents, not for developing itself.
