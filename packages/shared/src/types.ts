@@ -52,6 +52,21 @@ export interface OrchestratorConfig {
   projects: Record<string, ProjectConfig>;
 }
 
+// Loop — recurring polling command
+export interface Loop {
+  id: string;
+  agentId: string;
+  command: string;
+  type: "exec" | "message";
+  intervalMs: number;
+  label: string;
+  enabled: boolean;
+  lastRun?: string;
+  lastResult?: string;
+  lastExitCode?: number;
+  createdAt: string;
+}
+
 // Kanban task card
 export type TaskLane = "backlog" | "planning" | "in_progress" | "review" | "done";
 

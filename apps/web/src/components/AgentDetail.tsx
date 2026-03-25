@@ -6,9 +6,10 @@ import { MarkdownRenderer } from "./MarkdownRenderer";
 import { MessageInput } from "./MessageInput";
 import { LogView } from "./LogView";
 import { useAgentEvents } from "@/hooks/useAgentEvents";
-import { FileText, ScrollText, GitBranch } from "lucide-react";
+import { FileText, ScrollText, GitBranch, RefreshCw } from "lucide-react";
+import { LoopsView } from "./LoopsView";
 
-type Tab = "status" | "log" | "changes";
+type Tab = "status" | "log" | "changes" | "loops";
 
 export function AgentDetail({ agentId }: { agentId: string }) {
   const [tab, setTab] = useState<Tab>("log");
@@ -61,6 +62,7 @@ export function AgentDetail({ agentId }: { agentId: string }) {
     { id: "status", label: "Status", icon: FileText, badge: statusChanged ? true : false },
     { id: "log", label: "Log", icon: ScrollText, badge: logHasNew ? unreadCount : 0 },
     { id: "changes", label: "Changes", icon: GitBranch },
+    { id: "loops", label: "Loops", icon: RefreshCw },
   ];
 
   // Parse changes output
@@ -161,6 +163,7 @@ export function AgentDetail({ agentId }: { agentId: string }) {
             )}
           </div>
         )}
+        {tab === "loops" && <LoopsView agentId={agentId} />}
       </div>
 
       {/* Message input — always visible */}

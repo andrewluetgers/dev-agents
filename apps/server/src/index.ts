@@ -4,6 +4,7 @@ import { serveStatic } from "hono/bun";
 import { RPCHandler } from "@orpc/server/fetch";
 import { router, type Context } from "@dev-agents/rpc";
 import type { AgentInfo, AgentEvent } from "@dev-agents/shared";
+import { getLoops, startLoop, stopLoop, syncLoops } from "./loops.js";
 
 const PORT = parseInt(process.env.PORT || "8788", 10);
 
@@ -19,8 +20,10 @@ const agents = new Map<string, AgentInfo>();
 
 const rpcHandler = new RPCHandler(router);
 
+const loops = getLoops();
+
 function buildContext(): Context {
-  return { agents };
+  return { agents, loops };
 }
 
 app.use("/api/rpc/*", async (c) => {
@@ -266,4 +269,8 @@ async function discoverAgents() {
 }
 
 await discoverAgents();
+
+// Sync loop intervals every 2 seconds
+setInterval(() => syncLoops(agents), 2000);
+
 console.log(`Dev Agents server running on :${PORT}`);
