@@ -6,10 +6,11 @@ import { MarkdownRenderer } from "./MarkdownRenderer";
 import { MessageInput } from "./MessageInput";
 import { LogView } from "./LogView";
 import { useAgentEvents } from "@/hooks/useAgentEvents";
-import { FileText, ScrollText, GitBranch, RefreshCw } from "lucide-react";
+import { FileText, ScrollText, GitBranch, RefreshCw, BookOpen } from "lucide-react";
 import { LoopsView } from "./LoopsView";
+import { ContextView } from "./ContextView";
 
-type Tab = "status" | "log" | "changes" | "loops";
+type Tab = "status" | "log" | "changes" | "context" | "loops";
 
 export function AgentDetail({ agentId }: { agentId: string }) {
   const [tab, setTab] = useState<Tab>("log");
@@ -62,6 +63,7 @@ export function AgentDetail({ agentId }: { agentId: string }) {
     { id: "status", label: "Status", icon: FileText, badge: statusChanged ? true : false },
     { id: "log", label: "Log", icon: ScrollText, badge: logHasNew ? unreadCount : 0 },
     { id: "changes", label: "Changes", icon: GitBranch },
+    { id: "context", label: "Docs", icon: BookOpen },
     { id: "loops", label: "Loops", icon: RefreshCw },
   ];
 
@@ -127,8 +129,8 @@ export function AgentDetail({ agentId }: { agentId: string }) {
         ))}
       </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto p-4">
+      {/* Content — context tab gets no padding (has its own sidebar) */}
+      <div className={cn("flex-1 overflow-hidden", tab !== "context" && "overflow-y-auto p-4")}>
         {tab === "status" && (
           <MarkdownRenderer>
             {statusData?.markdown || "*No STATUS.md yet — agent hasn't started writing status updates.*"}
@@ -163,6 +165,7 @@ export function AgentDetail({ agentId }: { agentId: string }) {
             )}
           </div>
         )}
+        {tab === "context" && <ContextView agentId={agentId} />}
         {tab === "loops" && <LoopsView agentId={agentId} />}
       </div>
 
