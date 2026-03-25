@@ -1,16 +1,21 @@
-import { useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { rpc } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { MessageInput } from "./MessageInput";
-import { StreamView } from "./StreamView";
 import { LogView } from "./LogView";
-import { FileText, Radio, ScrollText } from "lucide-react";
+import { useAgentEvents } from "@/hooks/useAgentEvents";
+import { FileText, ScrollText, GitBranch } from "lucide-react";
 
-type Tab = "status" | "stream" | "log";
+type Tab = "status" | "log" | "changes";
 
 export function AgentDetail({ agentId }: { agentId: string }) {
-  const [tab, setTab] = useState<Tab>("status");
+  const [tab, setTab] = useState<Tab>("log");
+  const { unreadCount, markRead } = useAgentEvents(agentId);
+
+  // Track unread per tab
+  const [logLastSeen, setLogLastSeen] = useState(0);
+  const [statusLastSeen, setStatusLastSeen] = useState(0);
 
   const { data: health } = useQuery({
     queryKey: ["agent-health", agentId],
@@ -22,48 +27,87 @@ export function AgentDetail({ agentId }: { agentId: string }) {
     queryKey: ["agent-status", agentId],
     queryFn: () => rpc.agent.status({ id: agentId }),
     refetchInterval: 5000,
-    enabled: tab === "status",
   });
 
-  const { data: logData } = useQuery({
+  const { data: logData, dataUpdatedAt: logUpdatedAt } = useQuery({
     queryKey: ["agent-log", agentId],
-    queryFn: () => rpc.agent.log({ id: agentId, lines: 100 }),
+    queryFn: () => rpc.agent.log({ id: agentId, lines: 200 }),
     refetchInterval: 3000,
-    enabled: tab === "log",
   });
+
+  const { data: changesData } = useQuery({
+    queryKey: ["agent-changes", agentId],
+    queryFn: () => rpc.agent.exec({ id: agentId, command: "cd /home/agent/workspace && git diff --stat HEAD 2>/dev/null && echo '---DIFF---' && git diff HEAD 2>/dev/null | head -200" }),
+    refetchInterval: 10000,
+    enabled: tab === "changes",
+  });
+
+  // Mark tab as read when viewing
+  useEffect(() => {
+    if (tab === "log") setLogLastSeen(logUpdatedAt || 0);
+  }, [tab, logUpdatedAt]);
+
+  useEffect(() => {
+    if (tab === "status") setStatusLastSeen(Date.now());
+  }, [tab, statusData]);
 
   const session = health?.session;
+  const logLines = (logData?.log || "").split("\n").filter(Boolean).length;
+  const logHasNew = tab !== "log" && logUpdatedAt && logUpdatedAt > logLastSeen;
+  const statusChanged = tab !== "status" && statusData?.markdown && statusData.markdown !== "No status";
 
-  const tabs: { id: Tab; label: string; icon: typeof FileText }[] = [
-    { id: "status", label: "Status", icon: FileText },
-    { id: "stream", label: "Stream", icon: Radio },
-    { id: "log", label: "Log", icon: ScrollText },
+  const tabs: { id: Tab; label: string; icon: typeof FileText; badge?: number | boolean }[] = [
+    { id: "status", label: "Status", icon: FileText, badge: statusChanged ? true : false },
+    { id: "log", label: "Log", icon: ScrollText, badge: logHasNew ? unreadCount : 0 },
+    { id: "changes", label: "Changes", icon: GitBranch },
   ];
+
+  // Parse changes output
+  const changesStat = changesData?.stdout?.split("---DIFF---")[0] || "";
+  const changesDiff = changesData?.stdout?.split("---DIFF---")[1] || "";
 
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="p-3 border-b border-[var(--border)] flex items-center justify-between">
-        <div>
+      <div className="p-3 border-b border-[var(--border)]">
+        <div className="flex items-center justify-between">
           <h2 className="font-semibold">{agentId}</h2>
           {session && (
-            <div className="text-xs text-[var(--muted-foreground)] mt-0.5">
-              {session.status}
-              {session.currentTool && ` — ${session.currentTool}`}
-              {session.turns > 0 && ` — ${session.turns} turns`}
+            <div className="flex items-center gap-2">
+              <span className={cn(
+                "text-xs px-2 py-0.5 rounded",
+                session.status === "running" || session.status === "tool_use" || session.status === "thinking"
+                  ? "bg-[var(--accent)]/20 text-[var(--accent)]"
+                  : session.status === "done"
+                  ? "bg-[var(--success)]/20 text-[var(--success)]"
+                  : session.status === "error"
+                  ? "bg-[var(--error)]/20 text-[var(--error)]"
+                  : "bg-[var(--muted)] text-[var(--muted-foreground)]"
+              )}>
+                {session.status}
+              </span>
             </div>
           )}
         </div>
+        {session && (
+          <div className="text-xs text-[var(--muted-foreground)] mt-1">
+            {session.currentTool && <span>Running: <strong>{session.currentTool}</strong></span>}
+            {session.turns > 0 && <span className="ml-2">{session.turns} turns</span>}
+          </div>
+        )}
       </div>
 
-      {/* Tabs */}
+      {/* Tabs with badges */}
       <div className="flex border-b border-[var(--border)]">
-        {tabs.map(({ id, label, icon: Icon }) => (
+        {tabs.map(({ id, label, icon: Icon, badge }) => (
           <button
             key={id}
-            onClick={() => setTab(id)}
+            onClick={() => {
+              setTab(id);
+              if (id === "log") markRead();
+            }}
             className={cn(
-              "flex items-center gap-1.5 px-4 py-2 text-xs transition-colors",
+              "flex items-center gap-1.5 px-4 py-2 text-xs transition-colors relative",
               tab === id
                 ? "border-b-2 border-[var(--accent)] text-[var(--foreground)]"
                 : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
@@ -71,6 +115,11 @@ export function AgentDetail({ agentId }: { agentId: string }) {
           >
             <Icon size={12} />
             {label}
+            {badge && badge !== false && (
+              <span className="ml-1 bg-[var(--accent)] text-white text-[10px] px-1.5 py-0 rounded-full min-w-[16px] text-center">
+                {typeof badge === "number" ? (badge > 99 ? "99+" : badge) : ""}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -79,13 +128,41 @@ export function AgentDetail({ agentId }: { agentId: string }) {
       <div className="flex-1 overflow-y-auto p-4">
         {tab === "status" && (
           <pre className="whitespace-pre-wrap text-sm leading-relaxed">
-            {statusData?.markdown || "Loading..."}
+            {statusData?.markdown || "No STATUS.md yet — agent hasn't started writing status updates."}
           </pre>
         )}
-        {tab === "stream" && <StreamView agentId={agentId} />}
         {tab === "log" && <LogView log={logData?.log || ""} />}
+        {tab === "changes" && (
+          <div className="space-y-4">
+            {changesStat ? (
+              <>
+                <pre className="text-xs text-[var(--muted-foreground)] whitespace-pre-wrap">{changesStat.trim()}</pre>
+                {changesDiff && (
+                  <pre className="text-xs whitespace-pre-wrap font-mono leading-relaxed">
+                    {changesDiff.split("\n").map((line, i) => (
+                      <div
+                        key={i}
+                        className={cn(
+                          line.startsWith("+") && !line.startsWith("+++") ? "text-[var(--success)]" :
+                          line.startsWith("-") && !line.startsWith("---") ? "text-[var(--error)]" :
+                          line.startsWith("@@") ? "text-[var(--accent)]" :
+                          "text-[var(--muted-foreground)]"
+                        )}
+                      >
+                        {line}
+                      </div>
+                    ))}
+                  </pre>
+                )}
+              </>
+            ) : (
+              <div className="text-[var(--muted-foreground)] text-xs">No changes yet</div>
+            )}
+          </div>
+        )}
       </div>
 
+      {/* Message input — always visible */}
       <MessageInput agentId={agentId} />
     </div>
   );

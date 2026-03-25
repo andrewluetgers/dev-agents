@@ -1,5 +1,6 @@
 import type { AgentInfo } from "@dev-agents/shared";
 import { cn } from "@/lib/utils";
+import { useGlobalUnread } from "@/hooks/useAgentEvents";
 import { Bot, Plus, Circle } from "lucide-react";
 
 interface SidebarProps {
@@ -18,6 +19,8 @@ const statusColor: Record<string, string> = {
 };
 
 export function Sidebar({ agents, selectedAgent, onSelectAgent }: SidebarProps) {
+  const unread = useGlobalUnread();
+
   return (
     <aside className="w-64 border-r border-[var(--border)] flex flex-col h-full">
       {/* Header */}
@@ -56,7 +59,12 @@ export function Sidebar({ agents, selectedAgent, onSelectAgent }: SidebarProps) 
                   fill="currentColor"
                   className={statusColor[agent.status] || "text-[var(--muted-foreground)]"}
                 />
-                <span className="font-medium text-sm truncate">{agent.id}</span>
+                <span className="font-medium text-sm truncate flex-1">{agent.id}</span>
+                {(unread.get(agent.id) || 0) > 0 && (
+                  <span className="bg-[var(--accent)] text-white text-[10px] px-1.5 rounded-full min-w-[16px] text-center">
+                    {unread.get(agent.id)}
+                  </span>
+                )}
               </div>
               {agent.project && (
                 <div className="text-xs text-[var(--muted-foreground)] mt-1 ml-4">
