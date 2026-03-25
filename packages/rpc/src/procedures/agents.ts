@@ -1,5 +1,6 @@
 import { os } from "@orpc/server";
 import { z } from "zod";
+import { execSync } from "node:child_process";
 import type { Context } from "../context.js";
 
 const proc = os.$context<Context>();
@@ -121,19 +122,22 @@ export const spawn = proc
 
     args.push("dev-agent:latest");
 
-    const proc2 = Bun.spawnSync(args);
-    if (proc2.exitCode !== 0) {
-      throw new Error(`Docker spawn failed: ${proc2.stderr.toString()}`);
+    try {
+      var spawnOut = execSync(args.join(" "), { encoding: "utf8" });
+    } catch (e: any) {
+      throw new Error(`Docker spawn failed: ${e.stderr || e.message}`);
     }
 
-    const containerId = proc2.stdout.toString().trim().slice(0, 12);
+    const containerId = spawnOut.trim().slice(0, 12);
 
     // Wait and get ports
     await new Promise(r => setTimeout(r, 2000));
-    const portProc = Bun.spawnSync(["docker", "port", `dev-${input.name}`, "9111"]);
-    const hostPort = parseInt(portProc.stdout.toString().match(/:(\d+)/)?.[1] || "0", 10);
-    const chanProc = Bun.spawnSync(["docker", "port", `dev-${input.name}`, "9222"]);
-    const channelPort = parseInt(chanProc.stdout.toString().match(/:(\d+)/)?.[1] || "0", 10);
+    const hostPort = parseInt(
+      (execSync(`docker port dev-${input.name} 9111`, { encoding: "utf8" }).match(/:(\d+)/) || [])[1] || "0", 10
+    );
+    const channelPort = parseInt(
+      (execSync(`docker port dev-${input.name} 9222`, { encoding: "utf8" }).match(/:(\d+)/) || [])[1] || "0", 10
+    );
 
     const agent = {
       id: input.name,
@@ -167,7 +171,7 @@ export const spawn = proc
 export const stop = proc
   .input(z.object({ id: z.string() }))
   .handler(async ({ input, context }) => {
-    Bun.spawnSync(["docker", "rm", "-f", `dev-${input.id}`]);
+    try { execSync(`docker rm -f dev-${input.id}`); } catch {}
     context.agents.delete(input.id);
     return { status: "stopped", agent: input.id };
   });
