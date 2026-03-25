@@ -31,10 +31,10 @@ export function OrchestratorView() {
             key={id}
             onClick={() => setTab(id)}
             className={cn(
-              "flex items-center gap-1.5 px-4 py-2 text-xs transition-colors",
+              "flex items-center gap-1.5 px-4 py-2 text-xs transition-colors border-b-2",
               tab === id
-                ? "border-b-2 border-[var(--accent)] text-[var(--foreground)]"
-                : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                ? "border-[var(--accent)] text-[var(--foreground)]"
+                : "border-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
             )}
           >
             <Icon size={12} />
