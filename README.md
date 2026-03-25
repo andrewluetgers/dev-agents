@@ -1,8 +1,8 @@
 # dev-agents
 
-Orchestrate isolated AI coding agents in Docker containers. An orchestrator (Claude Code session) spawns, monitors, and manages agents that work autonomously in sandboxed environments. A web dashboard provides real-time observability into every agent's activity.
+Orchestrate isolated AI coding agents in Docker containers. A web dashboard provides real-time observability — embedded terminal, live session logs, git diffs, markdown docs, message injection, and a kanban board.
 
-Built on Claude Code's stream-json and MCP channel protocols. Inspired by [OpenAI Symphony](https://github.com/openai/symphony) and [harness engineering](https://openai.com/index/harness-engineering/) methodology.
+Built on Claude Code's stream-json and MCP channel protocols. Inspired by [cmux](https://github.com/greymd/cmux), [OpenAI Symphony](https://github.com/openai/symphony), and [harness engineering](https://openai.com/index/harness-engineering/) methodology.
 
 ## Architecture
 
@@ -10,69 +10,78 @@ Built on Claude Code's stream-json and MCP channel protocols. Inspired by [OpenA
 ┌─────────────────────────────────────────────────────────────────┐
 │  Host Machine                                                   │
 │                                                                 │
-│  ┌──────────────────┐    ┌──────────────────────────────────┐   │
-│  │  Claude Code CLI  │    │  Host Server (:8788)             │   │
-│  │  (Orchestrator)   │    │  Hono + oRPC + WebSocket         │   │
-│  │                   │    │                                  │   │
-│  │  MCP Channel ─────┼────┤  /api/rpc/*    oRPC procedures  │   │
-│  │  (stdio)          │    │  /api/events   push receiver     │   │
-│  │                   │    │  /api/ws       live events (WS)  │   │
-│  └────────┬──────────┘    │  /api/terminal orchestrator PTY  │   │
-│           │               │  /*            dashboard SPA     │   │
-│           │ HTTP          └──────────────┬───────────────────┘   │
-│           │                              │                       │
-│  ┌────────▼──────────────────────────────▼───────────────────┐  │
-│  │  Docker Containers                                        │  │
-│  │                                                           │  │
-│  │  ┌─────────────────┐  ┌─────────────────┐                │  │
-│  │  │  dev-agent-1     │  │  dev-agent-2     │  ...          │  │
-│  │  │  :9111 cmd srv   │  │  :9111 cmd srv   │               │  │
-│  │  │  :9222 channel   │  │  :9222 channel   │               │  │
-│  │  │                  │  │                  │               │  │
-│  │  │  Claude Code     │  │  Claude Code     │               │  │
-│  │  │  (stream-json)   │  │  (stream-json)   │               │  │
-│  │  └─────────────────┘  └─────────────────┘                │  │
-│  └───────────────────────────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  Host Server (:8788) — Node.js + Hono                    │   │
+│  │  /api/rpc/*      oRPC procedures (type-safe, Zod)        │   │
+│  │  /api/events     push event receiver from agents         │   │
+│  │  /api/ws         WebSocket for live dashboard events     │   │
+│  │  /api/terminal   WebSocket for orchestrator PTY (tmux)   │   │
+│  │  /*              dashboard SPA                           │   │
+│  └────────────────────────────┬─────────────────────────────┘   │
+│                               │                                 │
+│  ┌────────────────────────────▼─────────────────────────────┐   │
+│  │  Docker Containers                                        │   │
+│  │                                                           │   │
+│  │  ┌─────────────────────┐  ┌────────────────────┐         │   │
+│  │  │  Orchestrator        │  │  Agent Containers   │         │   │
+│  │  │  Claude Code in tmux │  │  Claude Code via    │         │   │
+│  │  │  + MCP channel       │  │  stream-json proxy  │         │   │
+│  │  │  ~/dev-agents/ mount │  │  :9111 cmd :9222 ch │         │   │
+│  │  └─────────────────────┘  └────────────────────┘         │   │
+│  └───────────────────────────────────────────────────────────┘   │
 │                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │  ~/dev-agents/                                           │   │
-│  │  orchestrator/config.json    agent-1/    agent-2/        │   │
-│  │  shared/                     (persisted home dirs)       │   │
+│  │  orchestrator/    config.json, CLAUDE.md, .mcp.json      │   │
+│  │  agent-1/         persistent home (workspace, logs)      │   │
+│  │  shared/          read-only shared data                  │   │
 │  └──────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
 
-┌──────────────────────────────────────────────────────────┐
-│  Browser — Dashboard (React + Tailwind)                  │
-│  ┌──────────┬───────────────────────────────────────┐    │
-│  │ Sidebar  │  Agent Detail / Orchestrator / Board  │    │
-│  │          │                                       │    │
-│  │ Orch     │  Tabs: Status | Log | Changes | Loops │    │
-│  │ agent-1  │                                       │    │
-│  │ agent-2  │  Message input bar                    │    │
-│  └──────────┴───────────────────────────────────────┘    │
-└──────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  Browser — Dashboard (:5174)                                  │
+│  ┌──────────┬───────────────────────────────────────────┐    │
+│  │ Sidebar  │  Orchestrator: Terminal | Events           │    │
+│  │          │  Agent Detail: Status|Log|Changes|Docs|Loops│    │
+│  │ + Orch   │  Board: Kanban lanes                       │    │
+│  │ ● agent  │  Message input (always visible)            │    │
+│  └──────────┴───────────────────────────────────────────┘    │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ## Features
 
-- **Isolated agents** — each agent runs in its own Docker container with a persistent home directory
-- **Bidirectional messaging** — orchestrator pushes messages into agent sessions; agents push events back
-- **Permission relay** — agents request tool permissions; orchestrator approves/denies per policy
-- **Live stream** — real-time SSE stream of each agent's Claude Code session (stream-json)
-- **Web dashboard** — sidebar with agent list, status badges, log viewer, diff viewer, message injection
-- **Orchestrator terminal** — embedded Ghostty WASM terminal running the orchestrator's Claude Code CLI
-- **Kanban board** — task cards derived from agent status, mapped to lanes
-- **Loops** — recurring commands (exec or message) on intervals per agent
-- **CLI skill** — `/dev-agent` slash command for spawning, messaging, and managing agents from Claude Code
+- **Containerized orchestrator** — Claude Code runs in a Docker container with tmux, auto-starts on server launch, persists across browser tab close/reopen
+- **Isolated agents** — each agent gets its own Docker container with a git clone of the project
+- **Live terminal** — [ghostty-web](https://github.com/coder/ghostty-web) WASM terminal in the dashboard showing the orchestrator's Claude Code session
+- **Structured log viewer** — parses stream-json output into readable format with tool call icons, markdown rendering, syntax highlighting, mermaid diagrams
+- **Message injection** — send messages to agents mid-task (like `/btw`), works while agent is busy
+- **Docs browser** — per-agent file browser showing CLAUDE.md, WORKFLOW.md, memory.md, config, and all markdown files
+- **Git diff viewer** — color-coded diff view of agent's uncommitted changes
+- **Kanban board** — task cards derived from agent status, mapped to lanes (Backlog → Done)
+- **Loops** — recurring polling commands on agents with create/enable/disable/delete
+- **Unread badges** — notification indicators on tabs and sidebar
+- **Spawn dialog** — create agents from registered projects, local paths, or git URLs
 - **Auto-discovery** — host server finds running agent containers on startup
-- **Warm restart** — stopping an agent preserves its home directory; restarting picks up where it left off
+- **Permission relay** — MCP-based permission flow from agent → orchestrator → verdict
+- **SSO auth** — API key extracted from macOS Keychain, handles rotation
 
-## Requirements
+## Technology Stack
 
-- **Docker Desktop** with Compose v2+ (Enhanced Container Isolation supported)
-- **Claude Code** v2.1.80+ — authenticated via claude.ai (SSO works)
-- **Node.js** 22+, **Bun**, **pnpm**
-- **Git**
+See [CLAUDE.md](CLAUDE.md) for rationale behind each choice.
+
+| Layer | Technology |
+|-------|-----------|
+| Terminal | ghostty-web (WASM) |
+| RPC | oRPC + Zod |
+| Data fetching | React Query via oRPC |
+| UI | React 19 + Tailwind v4 |
+| Markdown | react-markdown + remark-gfm + rehype-highlight + mermaid |
+| Build | Vite + Turborepo |
+| Host server | Hono + Node.js (tsx) |
+| Agent runtime | Bun (inside Docker) |
+| PTY | node-pty (prebuilt) |
+| Monorepo | pnpm workspaces |
 
 ## Quick Start
 
@@ -83,188 +92,78 @@ cd dev-agents
 pnpm install
 
 # Build the agent Docker image
-cd image && docker build -t dev-agent:latest . && cd ..
+docker build -t dev-agent:latest --build-arg AGENT_UID=$(id -u) ./image
 
-# Create orchestrator config
-mkdir -p ~/dev-agents/orchestrator
-cp config.example.json ~/dev-agents/orchestrator/config.json
-# Edit config.json: set homesDir, register projects
-
-# Start the dashboard + host server
+# Start everything (server + dashboard)
 pnpm dev
-
-# In another terminal, start the orchestrator channel
-claude --dangerously-load-development-channels server:agent
 ```
 
-The dashboard is at `http://localhost:8788`. The orchestrator runs as a Claude Code MCP channel.
+Open `http://localhost:5174`. The orchestrator container starts automatically with Claude Code in tmux. Click "Orchestrator" in the sidebar to see the terminal.
 
-### Interactive setup (alternative)
+### First-time setup
+
+For full setup including Docker ECI configuration, auth, and project registration:
 
 ```bash
 claude
 /dev-agents-init
 ```
 
-The `/dev-agents-init` skill walks through prerequisites, image build, config creation, project registration, and auth setup.
-
 ## Monorepo Structure
 
 ```
 dev-agents/
 ├── apps/
-│   ├── server/                 # Host API server (Bun + Hono)
-│   │   └── src/index.ts        # HTTP, WebSocket, oRPC, SSE proxy
-│   └── web/                    # Dashboard SPA (React + Vite + Tailwind)
-│       └── src/components/     # Layout, Sidebar, AgentDetail, BoardView, etc.
+│   ├── server/                 # Host API server (Node.js + Hono + node-pty)
+│   └── web/                    # Dashboard SPA (React + Vite + ghostty-web)
 ├── image/
-│   ├── Dockerfile              # Agent container image (node:22-slim + Claude Code)
-│   ├── server.ts               # In-container server: cmd (:9111) + channel (:9222)
+│   ├── Dockerfile              # Agent container (node:22 + Claude Code + Playwright)
+│   ├── server.ts               # In-container dual-protocol server
 │   └── channel/
-│       └── agent-channel.ts    # Orchestrator MCP channel (stdio transport)
+│       └── agent-channel.ts    # Orchestrator MCP channel
 ├── packages/
-│   ├── rpc/                    # oRPC router and procedures
-│   │   └── src/procedures/     # agents.ts, projects.ts, loops.ts
-│   └── shared/                 # Shared types (AgentInfo, AgentEvent, etc.)
+│   ├── rpc/                    # oRPC router (agents, projects, loops)
+│   ├── shared/                 # Shared TypeScript types
+│   └── typescript-config/      # Shared tsconfig
 ├── scripts/
-│   └── start-channel.sh        # Launches orchestrator channel with keychain auth
-├── .claude/skills/
-│   ├── dev-agent/              # /dev-agent CLI skill
-│   ├── dev-agents-init/        # /dev-agents-init setup skill
-│   └── onboard-project/        # /onboard-project readiness assessment
-├── docs/
-│   ├── ARCHITECTURE.md         # Detailed architecture document
-│   ├── INTERFACE-DESIGN.md     # Dashboard interface design document
-│   └── SYMPHONY-PLAN.md        # Implementation plan (Symphony adaptation)
-├── turbo.json                  # Turborepo task config
-├── package.json                # Monorepo root (pnpm workspaces)
-└── .mcp.json                   # Registers MCP channel with Claude Code
+│   ├── start-channel.sh        # MCP channel launcher (keychain auth)
+│   └── get-claude-key.sh       # Extract API key from macOS Keychain
+├── .claude/skills/             # Claude Code slash commands
+├── templates/                  # Agent status template
+├── CLAUDE.md                   # Technology decisions (do not change lightly)
+├── turbo.json                  # Turborepo config
+└── package.json                # Monorepo root
 ```
 
-Managed with **Turborepo** and **pnpm workspaces**. Key commands:
+## Commands
 
 ```bash
-pnpm dev          # Start all apps in dev mode (server + web)
-pnpm build        # Build all packages and apps
-pnpm typecheck    # Type-check everything
-pnpm lint         # Lint everything
+pnpm dev                                # Start server (:8788) + dashboard (:5174)
+pnpm --filter @dev-agents/server dev    # Server only
+pnpm --filter @dev-agents/web dev       # Dashboard only
+pnpm build                              # Build all
+pnpm typecheck                          # Type-check all
 ```
 
-## How It Works
+## Agent Communication
 
-### Orchestrator → Agents → Containers
+Agents use two protocols simultaneously:
 
-1. **Orchestrator** is a Claude Code session with the `agent-channel.ts` MCP channel loaded. It has tools to spawn, stop, message, and manage agents.
-
-2. **Spawn** creates a Docker container from `dev-agent:latest`. The container runs `server.ts`, which exposes two HTTP servers:
-   - **Command server** (`:9111`) — health, exec, session start, stream (SSE), ask/respond
-   - **Channel server** (`:9222`) — message injection, permission verdicts, MCP over HTTP
-
-3. **Agent's Claude Code session** runs inside the container via stream-json protocol. The agent server reads stdout line-by-line, parses events, broadcasts to SSE clients, and pushes key events to the orchestrator.
-
-4. **Communication** is push-based in both directions:
-   - Orchestrator → Agent: HTTP POST to `:9222/message` (injected into Claude's stdin as `[From orchestrator]: ...`)
-   - Agent → Orchestrator: HTTP POST to the host's `/api/events` endpoint, which forwards as MCP channel notifications
-
-5. **Permission relay**: When Claude Code inside the container needs tool approval, the MCP permission request flows from Claude → agent server → orchestrator → verdict → back to agent server → Claude.
-
-### Host Server
-
-The host server (`apps/server/src/index.ts`) runs on `:8788` and serves three roles:
-- **API server** — oRPC procedures for the dashboard (list agents, get health, send messages, exec commands, spawn/stop)
-- **Push receiver** — `/api/events` endpoint where agent containers POST events
-- **Dashboard host** — serves the built React SPA and proxies SSE streams from agent containers
-
-### Dashboard
-
-The web dashboard connects via:
-- **oRPC** for CRUD operations (list agents, spawn, stop, send messages)
-- **WebSocket** (`/api/ws`) for real-time event push
-- **SSE proxy** (`/api/agents/:id/stream`) for live Claude Code session streams
-- **WebSocket** (`/api/terminal`) for the orchestrator's embedded terminal
-
-## CLI Commands
-
-The `/dev-agent` skill provides a unified interface from any Claude Code session:
-
-```
-/dev-agent                              # List agents or offer to spawn
-/dev-agent new my-project               # Spawn agent for a project
-/dev-agent new my-project fix auth bug  # Spawn with initial task
-/dev-agent status                       # Status of all agents
-/dev-agent status agent-1               # Detailed status (reads STATUS.md)
-/dev-agent msg agent-1 try login flow   # Inject message into agent's session
-/dev-agent run agent-1 pnpm test        # Run command in agent's container
-/dev-agent stop agent-1                 # Stop agent (preserves home dir)
-```
-
-## Configuration
-
-Orchestrator config lives at `~/dev-agents/orchestrator/config.json`:
-
-```json
-{
-  "agentImage": "dev-agent:latest",
-  "homesDir": "/Users/you/dev-agents",
-  "channelPort": 8788,
-  "defaults": {
-    "memory": "8g",
-    "agentUid": 501
-  },
-  "projects": {
-    "my-project": {
-      "localPath": "/Users/you/dev/my-project"
-    }
-  }
-}
-```
-
-Key fields:
-- `agentImage` — Docker image name for agent containers
-- `homesDir` — where agent home directories are created (`~/dev-agents/`)
-- `channelPort` — port the orchestrator channel listens on for push events
-- `projects` — registered projects (name → local path mapping)
-
-## Auth
-
-Agent containers need an `ANTHROPIC_API_KEY` to run Claude Code. The orchestrator channel (`start-channel.sh`) fetches the key from the macOS Keychain:
-
-```bash
-security find-generic-password -s "Claude Code" -w
-```
-
-This key is passed as an environment variable when spawning containers. SSO keys rotate, so the key is fetched fresh at spawn time.
-
-## Development
-
-```bash
-# Install dependencies
-pnpm install
-
-# Start dev servers (host server + web dashboard with HMR)
-pnpm dev
-
-# Build the Docker image (run from image/ directory)
-cd image && docker build -t dev-agent:latest --build-arg AGENT_UID=$(id -u) .
-
-# Start the orchestrator channel (separate terminal)
-claude --dangerously-load-development-channels server:agent
-```
-
-The host server runs on `:8788` in dev mode. The web app uses Vite with HMR. Changes to `packages/` are picked up by Turborepo's dependency graph.
+- **Stream-json** (stdin/stdout) — observability + message injection. Claude Code runs with `--input-format stream-json --output-format stream-json`. Output logged to file, broadcast via SSE, key events pushed to orchestrator.
+- **MCP over HTTP** (:9222/mcp) — channel capabilities + permission relay. Agent's Claude Code connects to the local MCP server for `ask_orchestrator` and `report_status` tools.
 
 ## Port Assignments
 
 | Port | Service | Location |
 |------|---------|----------|
-| 8788 | Host server (API + dashboard + push receiver) | Host |
-| 9111 | Agent command server (per container) | Container |
-| 9222 | Agent channel server (per container) | Container |
-
-Container ports are mapped to random host ports via `docker run -p 0:9111 -p 0:9222`.
+| 8788 | Host server (API + dashboard) | Host |
+| 5174 | Vite dev server (HMR) | Host (dev only) |
+| 9111 | Agent command server | Container |
+| 9222 | Agent channel server | Container |
+| 8789 | Orchestrator channel | Container |
 
 ## Further Reading
 
-- [Architecture](docs/ARCHITECTURE.md) — detailed system design, data flows, protocols
-- [Interface Design](docs/INTERFACE-DESIGN.md) — dashboard layout, inspirations, planned features
-- [Symphony Plan](docs/SYMPHONY-PLAN.md) — implementation plan for automated task dispatch
+- [CLAUDE.md](CLAUDE.md) — technology decisions and architecture principles
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — detailed system design and data flows
+- [docs/INTERFACE-DESIGN.md](docs/INTERFACE-DESIGN.md) — dashboard layout and planned features
