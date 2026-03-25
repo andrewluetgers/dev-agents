@@ -7,8 +7,10 @@
     "node": ">=22"
   },
   "scripts": {
+    "start": "./scripts/start.sh",
+    "stop": "./scripts/stop.sh",
+    "dev": "./scripts/dev.sh",
     "build": "turbo run build",
-    "dev": "turbo run dev",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck"
   },
