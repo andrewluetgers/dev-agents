@@ -168,8 +168,8 @@ function ensureOrchestratorContainer() {
     "--memory", "8g",
     "dev-agent:latest",
     "bash", "-c",
-    // Start Claude in a tmux session so it survives disconnects
-    "tmux new-session -d -s orchestrator claude; sleep infinity",
+    // Start Claude in tmux, then send the initial prompt after it's ready
+    `tmux new-session -d -s orchestrator claude; sleep 5; tmux send-keys -t orchestrator "Give me a status overview: list all running agents, check their health, and show any registered projects. Then suggest 3-5 example prompts I could use — some for continuing existing agent work, some for starting new tasks." Enter; sleep infinity`,
   ], { encoding: "utf8" });
 
   if (result.status !== 0) {
