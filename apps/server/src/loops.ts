@@ -1,14 +1,51 @@
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import type { Loop, AgentInfo } from "@dev-agents/shared";
+
+const LOOPS_FILE = join(
+  process.env.HOME || "/tmp",
+  "dev-agents",
+  "orchestrator",
+  "loops.json"
+);
 
 const loops = new Map<string, Loop>();
 const intervals = new Map<string, ReturnType<typeof setInterval>>();
+
+// --- Persistence ---
+
+function save() {
+  try {
+    const data = [...loops.values()];
+    writeFileSync(LOOPS_FILE, JSON.stringify(data, null, 2));
+  } catch {}
+}
+
+function load() {
+  try {
+    if (!existsSync(LOOPS_FILE)) return;
+    const data = JSON.parse(readFileSync(LOOPS_FILE, "utf-8")) as Loop[];
+    for (const loop of data) {
+      // Restore but paused — user decides what to resume
+      loop.enabled = false;
+      loops.set(loop.id, loop);
+    }
+    if (data.length > 0) {
+      console.log(`Restored ${data.length} loop(s) from disk (all paused — use dashboard to resume)`);
+    }
+  } catch {}
+}
+
+// Load on startup
+load();
+
+// --- Exports ---
 
 export function getLoops(): Map<string, Loop> {
   return loops;
 }
 
 export function startLoop(loop: Loop, agents: Map<string, AgentInfo>) {
-  // Clear existing interval if any
   stopLoop(loop.id);
 
   if (!loop.enabled) return;
@@ -25,6 +62,7 @@ export function startLoop(loop: Loop, agents: Map<string, AgentInfo>) {
       current.lastResult = "Agent not found";
       current.lastExitCode = 1;
       current.lastRun = new Date().toISOString();
+      save();
       return;
     }
 
@@ -40,10 +78,7 @@ export function startLoop(loop: Loop, agents: Map<string, AgentInfo>) {
           stderr?: string;
           exitCode?: number;
         };
-        current.lastResult = (result.stdout || result.stderr || "").slice(
-          0,
-          2000
-        );
+        current.lastResult = (result.stdout || result.stderr || "").slice(0, 2000);
         current.lastExitCode = result.exitCode ?? 0;
       } else {
         const resp = await fetch(
@@ -51,10 +86,7 @@ export function startLoop(loop: Loop, agents: Map<string, AgentInfo>) {
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              content: current.command,
-              from: "loop",
-            }),
+            body: JSON.stringify({ content: current.command, from: "loop" }),
           }
         );
         const result = (await resp.json()) as { status?: string };
@@ -67,11 +99,10 @@ export function startLoop(loop: Loop, agents: Map<string, AgentInfo>) {
     }
 
     current.lastRun = new Date().toISOString();
+    save();
   };
 
-  // Run first tick immediately
   tick();
-
   const intervalId = setInterval(tick, loop.intervalMs);
   intervals.set(loop.id, intervalId);
 }
@@ -85,17 +116,14 @@ export function stopLoop(id: string) {
 }
 
 export function syncLoops(agents: Map<string, AgentInfo>) {
-  // Stop intervals for deleted loops
   for (const id of intervals.keys()) {
     if (!loops.has(id)) {
       stopLoop(id);
     }
   }
 
-  // Start intervals for all enabled loops, stop disabled ones
   for (const loop of loops.values()) {
     if (loop.enabled) {
-      // Only start if not already running
       if (!intervals.has(loop.id)) {
         startLoop(loop, agents);
       }
@@ -103,4 +131,9 @@ export function syncLoops(agents: Map<string, AgentInfo>) {
       stopLoop(loop.id);
     }
   }
+}
+
+// Save whenever a loop is created/updated/deleted (called from RPC)
+export function saveLoops() {
+  save();
 }

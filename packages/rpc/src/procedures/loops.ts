@@ -45,6 +45,7 @@ export const create = proc
       createdAt: new Date().toISOString(),
     };
     context.loops.set(id, loop);
+    context.saveLoops();
     return loop;
   });
 
@@ -65,6 +66,7 @@ export const update = proc
     if (input.intervalMs !== undefined) loop.intervalMs = input.intervalMs;
     if (input.enabled !== undefined) loop.enabled = input.enabled;
     if (input.label !== undefined) loop.label = input.label;
+    context.saveLoops();
     return loop;
   });
 
@@ -72,6 +74,7 @@ export const remove = proc
   .input(z.object({ id: z.string() }))
   .handler(async ({ input, context }) => {
     const existed = context.loops.delete(input.id);
+    context.saveLoops();
     return { deleted: existed };
   });
 

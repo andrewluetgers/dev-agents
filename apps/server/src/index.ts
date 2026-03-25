@@ -6,7 +6,7 @@ import { createNodeWebSocket } from "@hono/node-ws";
 import { RPCHandler } from "@orpc/server/fetch";
 import { router, type Context } from "@dev-agents/rpc";
 import type { AgentInfo, AgentEvent } from "@dev-agents/shared";
-import { getLoops, syncLoops } from "./loops.js";
+import { getLoops, syncLoops, saveLoops } from "./loops.js";
 import { execSync, spawnSync } from "node:child_process";
 import { writeFileSync, existsSync } from "node:fs";
 import * as pty from "@homebridge/node-pty-prebuilt-multiarch";
@@ -38,7 +38,7 @@ const rpcHandler = new RPCHandler(router);
 const loops = getLoops();
 
 function buildContext(): Context {
-  return { agents, loops };
+  return { agents, loops, saveLoops };
 }
 
 app.use("/api/rpc/*", async (c) => {
