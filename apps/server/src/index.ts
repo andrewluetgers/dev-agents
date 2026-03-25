@@ -165,7 +165,9 @@ function ensureOrchestratorContainer() {
     "-w", "/home/agent/dev-agents/orchestrator",
     "--memory", "8g",
     "dev-agent:latest",
-    "sleep", "infinity",
+    "bash", "-c",
+    // Start Claude in a tmux session so it survives disconnects
+    "tmux new-session -d -s orchestrator claude; sleep infinity",
   ], { encoding: "utf8" });
 
   if (result.status !== 0) {
@@ -182,9 +184,11 @@ app.get("/api/terminal", upgradeWebSocket(() => {
 
   return {
     onOpen(_event, ws) {
-      // Just attach — container is already running
+      // Attach to the tmux session running Claude
+      // If tmux session died, start a new one
       term = pty.spawn("docker", [
-        "exec", "-it", "dev-orchestrator-tty", "bash", "-l",
+        "exec", "-it", "dev-orchestrator-tty",
+        "bash", "-c", "tmux attach -t orchestrator 2>/dev/null || tmux new-session -s orchestrator claude",
       ], {
         name: "xterm-256color",
         cols: 120,
