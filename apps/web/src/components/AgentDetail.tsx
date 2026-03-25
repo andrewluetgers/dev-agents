@@ -4,6 +4,7 @@ import { rpc } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { MessageInput } from "./MessageInput";
 import { StreamView } from "./StreamView";
+import { LogView } from "./LogView";
 import { FileText, Radio, ScrollText } from "lucide-react";
 
 type Tab = "status" | "stream" | "log";
@@ -82,11 +83,7 @@ export function AgentDetail({ agentId }: { agentId: string }) {
           </pre>
         )}
         {tab === "stream" && <StreamView agentId={agentId} />}
-        {tab === "log" && (
-          <pre className="whitespace-pre-wrap text-xs font-mono leading-relaxed text-[var(--muted-foreground)]">
-            {logData?.log || "No log data"}
-          </pre>
-        )}
+        {tab === "log" && <LogView log={logData?.log || ""} />}
       </div>
 
       <MessageInput agentId={agentId} />
