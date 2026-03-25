@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { Bot, Terminal, CheckCircle, XCircle, MessageSquare, Wrench, Brain, Info } from "lucide-react";
+import { Bot, Terminal, CheckCircle, XCircle, MessageSquare, Wrench, Brain, Info, FileCode, Search, FolderSearch } from "lucide-react";
 
 const URL_REGEX = /(https?:\/\/[^\s<>"')\]]+)/g;
 
@@ -37,12 +37,65 @@ interface ParsedEvent {
   text?: string;
   toolName?: string;
   toolInput?: string;
+  toolInputRaw?: Record<string, unknown>;
   result?: string;
   event?: string;
   content?: string;
   cost?: string;
   turns?: number;
   timestamp?: string;
+}
+
+function shortenPath(path: string): string {
+  // /home/agent/workspace/apps/web/src/foo.tsx → apps/web/src/foo.tsx
+  return path.replace(/^\/home\/agent\/workspace\//, "");
+}
+
+function formatToolInput(name: string, input: Record<string, unknown>): string {
+  switch (name) {
+    case "Read":
+      return shortenPath(String(input.file_path || ""))
+        + (input.offset ? ` :${input.offset}` : "")
+        + (input.limit ? `–${Number(input.offset || 0) + Number(input.limit)}` : "");
+
+    case "Edit":
+      return shortenPath(String(input.file_path || ""));
+
+    case "Write":
+      return shortenPath(String(input.file_path || ""));
+
+    case "Glob":
+      return `${input.pattern || ""}`
+        + (input.path ? ` in ${shortenPath(String(input.path))}` : "");
+
+    case "Grep":
+      return `/${input.pattern || ""}/`
+        + (input.path ? ` in ${shortenPath(String(input.path))}` : "")
+        + (input.glob ? ` (${input.glob})` : "");
+
+    case "Bash":
+      return String(input.command || "").slice(0, 150);
+
+    case "Agent":
+      return String(input.description || input.prompt || "").slice(0, 100);
+
+    case "ToolSearch":
+      return String(input.query || "");
+
+    default:
+      // MCP tools like mcp__playwright__browser_navigate
+      if (name.startsWith("mcp__playwright__")) {
+        const action = name.replace("mcp__playwright__", "");
+        if (input.url) return `${action} → ${input.url}`;
+        if (input.selector) return `${action} "${input.selector}"`;
+        if (input.text) return `${action} "${String(input.text).slice(0, 80)}"`;
+        return action;
+      }
+      if (name.startsWith("mcp__channel__")) {
+        return name.replace("mcp__channel__", "") + " " + String(input.question || input.message || input.status || "");
+      }
+      return JSON.stringify(input).slice(0, 150);
+  }
 }
 
 function parseLine(line: string): ParsedEvent | null {
@@ -58,7 +111,8 @@ function parseLine(line: string): ParsedEvent | null {
           return {
             type: "tool_use",
             toolName: block.name,
-            toolInput: JSON.stringify(block.input || {}).slice(0, 200),
+            toolInputRaw: block.input || {},
+            toolInput: formatToolInput(block.name, block.input || {}),
           };
         }
         if (block.type === "thinking" && block.thinking) {
@@ -153,18 +207,26 @@ function LogLine({ event }: { event: ParsedEvent }) {
         </div>
       );
 
-    case "tool_use":
+    case "tool_use": {
+      const isFile = ["Read", "Edit", "Write"].includes(event.toolName || "");
+      const isSearch = ["Grep", "Glob"].includes(event.toolName || "");
+      const isBash = event.toolName === "Bash";
+      const ToolIcon = isFile ? FileCode : isSearch ? FolderSearch : isBash ? Terminal : Wrench;
+
       return (
         <div className="pl-2 border-l-2 border-[var(--warning)] py-0.5">
           <div className="flex items-start gap-1.5">
-            <Wrench size={11} className="text-[var(--warning)] mt-0.5 shrink-0" />
+            <ToolIcon size={11} className="text-[var(--warning)] mt-0.5 shrink-0" />
             <span>
               <span className="text-[var(--warning)] font-semibold">{event.toolName}</span>
-              <span className="text-[var(--muted-foreground)] ml-2">{event.toolInput}</span>
+              <span className="text-[var(--muted-foreground)] ml-2">
+                <Linkify>{event.toolInput || ""}</Linkify>
+              </span>
             </span>
           </div>
         </div>
       );
+    }
 
     case "tool_result":
       return (
