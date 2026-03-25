@@ -7,6 +7,7 @@ interface SidebarProps {
   agents: AgentInfo[];
   selectedAgent: string | null;
   onSelectAgent: (id: string | null) => void;
+  onSpawn?: () => void;
 }
 
 const statusColor: Record<string, string> = {
@@ -18,7 +19,7 @@ const statusColor: Record<string, string> = {
   discovered: "text-[var(--warning)]",
 };
 
-export function Sidebar({ agents, selectedAgent, onSelectAgent }: SidebarProps) {
+export function Sidebar({ agents, selectedAgent, onSelectAgent, onSpawn }: SidebarProps) {
   const unread = useGlobalUnread();
 
   return (
@@ -30,6 +31,7 @@ export function Sidebar({ agents, selectedAgent, onSelectAgent }: SidebarProps) 
           <span className="font-semibold text-sm">dev-agents</span>
         </div>
         <button
+          onClick={onSpawn}
           className="p-1 rounded hover:bg-[var(--muted)] transition-colors"
           title="Spawn new agent"
         >

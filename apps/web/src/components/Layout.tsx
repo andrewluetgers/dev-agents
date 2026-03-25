@@ -4,9 +4,11 @@ import { rpc } from "@/lib/api";
 import { Sidebar } from "./Sidebar";
 import { AgentDetail } from "./AgentDetail";
 import { EmptyState } from "./EmptyState";
+import { SpawnDialog } from "./SpawnDialog";
 
 export function Layout() {
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  const [spawnOpen, setSpawnOpen] = useState(false);
 
   const { data: agents = [] } = useQuery({
     queryKey: ["agents"],
@@ -19,7 +21,9 @@ export function Layout() {
         agents={agents}
         selectedAgent={selectedAgent}
         onSelectAgent={setSelectedAgent}
+        onSpawn={() => setSpawnOpen(true)}
       />
+      <SpawnDialog open={spawnOpen} onClose={() => setSpawnOpen(false)} />
       <main className="flex-1 overflow-hidden">
         {selectedAgent ? (
           <AgentDetail agentId={selectedAgent} />
