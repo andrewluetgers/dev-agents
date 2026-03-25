@@ -5,6 +5,7 @@ import { RPCHandler } from "@orpc/server/fetch";
 import { router, type Context } from "@dev-agents/rpc";
 import type { AgentInfo, AgentEvent } from "@dev-agents/shared";
 import { getLoops, startLoop, stopLoop, syncLoops } from "./loops.js";
+import * as pty from "node-pty";
 
 const PORT = parseInt(process.env.PORT || "8788", 10);
 
@@ -123,11 +124,11 @@ app.get("/api/agents/:id/stream", async (c) => {
 app.use("/*", serveStatic({ root: "../web/dist" }));
 app.get("/*", serveStatic({ path: "../web/dist/index.html" }));
 
-// --- Terminal sessions (pty for orchestrator CLI) ---
+// --- Terminal sessions (real PTY via node-pty) ---
 
 interface WsData {
   type: "events" | "terminal";
-  pty?: ReturnType<typeof Bun.spawn>;
+  ptyProcess?: pty.IPty;
 }
 
 // --- Start ---
@@ -157,51 +158,29 @@ const server = Bun.serve<WsData>({
       if (ws.data.type === "events") {
         wsClients.add(ws as any);
       } else if (ws.data.type === "terminal") {
-        // Spawn a shell with claude available
-        // Force interactive bash with prompt
-        const pty = Bun.spawn(["bash", "-li"], {
-          stdin: "pipe",
-          stdout: "pipe",
-          stderr: "pipe",
-          env: {
-            ...process.env,
-            TERM: "xterm-256color",
-            COLUMNS: "120",
-            LINES: "40",
-            PS1: "\\[\\033[1;34m\\]dev-agents\\[\\033[0m\\] \\w $ ",
-          },
+        // Spawn a real PTY — proper newlines, interactive shell, resize support
+        const shell = process.env.SHELL || "/bin/zsh";
+        const ptyProcess = pty.spawn(shell, ["-l"], {
+          name: "xterm-256color",
+          cols: 120,
+          rows: 40,
+          cwd: process.env.HOME || "/tmp",
+          env: process.env as Record<string, string>,
         });
-        ws.data.pty = pty;
+        ws.data.ptyProcess = ptyProcess;
 
-        // Pipe stdout to WebSocket
-        const reader = pty.stdout.getReader();
-        const decoder = new TextDecoder();
-        (async () => {
-          try {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              ws.send(decoder.decode(value));
-            }
-          } catch {}
-          ws.close();
-        })();
+        // PTY output → WebSocket
+        ptyProcess.onData((data: string) => {
+          try { ws.send(data); } catch {}
+        });
 
-        // Pipe stderr to WebSocket
-        const errReader = pty.stderr.getReader();
-        (async () => {
-          try {
-            while (true) {
-              const { done, value } = await errReader.read();
-              if (done) break;
-              ws.send(decoder.decode(value));
-            }
-          } catch {}
-        })();
+        ptyProcess.onExit(() => {
+          try { ws.close(); } catch {}
+        });
       }
     },
     message(ws, msg) {
-      if (ws.data.type === "terminal" && ws.data.pty) {
+      if (ws.data.type === "terminal" && ws.data.ptyProcess) {
         const data = typeof msg === "string" ? msg : new TextDecoder().decode(msg as ArrayBuffer);
 
         // Check for resize messages
@@ -209,24 +188,21 @@ const server = Bun.serve<WsData>({
           try {
             const parsed = JSON.parse(data);
             if (parsed.type === "resize" && parsed.cols && parsed.rows) {
-              // Update COLUMNS/LINES env for the shell
-              // Note: true PTY resize needs node-pty; for now just pass through
+              ws.data.ptyProcess.resize(parsed.cols, parsed.rows);
               return;
             }
           } catch {}
         }
 
-        // Forward user input to the shell
-        const stdin = ws.data.pty.stdin as any;
-        stdin.write(new TextEncoder().encode(data));
-        stdin.flush();
+        // Forward user input to the PTY
+        ws.data.ptyProcess.write(data);
       }
     },
     close(ws) {
       if (ws.data.type === "events") {
         wsClients.delete(ws as any);
-      } else if (ws.data.type === "terminal" && ws.data.pty) {
-        ws.data.pty.kill();
+      } else if (ws.data.type === "terminal" && ws.data.ptyProcess) {
+        ws.data.ptyProcess.kill();
       }
     },
   },

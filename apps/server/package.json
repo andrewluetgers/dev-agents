@@ -9,10 +9,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@dev-agents/shared": "workspace:*",
     "@dev-agents/rpc": "workspace:*",
+    "@dev-agents/shared": "workspace:*",
     "@orpc/server": "^1.13.6",
-    "hono": "^4.7.0"
+    "hono": "^4.7.0",
+    "node-pty": "^1.1.0"
   },
   "devDependencies": {
     "@dev-agents/typescript-config": "workspace:*",
