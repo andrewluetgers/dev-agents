@@ -101,6 +101,29 @@ app.post("/api/events", async (c) => {
   return c.json({ status: "delivered" });
 });
 
+// --- Orchestrator management ---
+
+app.post("/api/orchestrator/restart-session", async (c) => {
+  // Kill the tmux session and start a new one (container stays running)
+  try {
+    execSync("docker exec dev-orchestrator-tty tmux kill-session -t orchestrator 2>/dev/null");
+  } catch {}
+  try {
+    const apiKey = getApiKey();
+    execSync(`docker exec -d dev-orchestrator-tty bash -c "ANTHROPIC_API_KEY=${apiKey} tmux new-session -d -s orchestrator 'claude --dangerously-skip-permissions'"`);
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500);
+  }
+  return c.json({ status: "restarted" });
+});
+
+app.post("/api/orchestrator/restart-container", async (c) => {
+  // Kill and recreate the entire container
+  try { execSync("docker rm -f dev-orchestrator-tty 2>/dev/null"); } catch {}
+  ensureOrchestratorContainer();
+  return c.json({ status: "restarted" });
+});
+
 // --- WebSocket: live events ---
 
 app.get("/api/ws", upgradeWebSocket(() => ({

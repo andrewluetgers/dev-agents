@@ -1,7 +1,10 @@
 import type { AgentInfo } from "@dev-agents/shared";
 import { cn } from "@/lib/utils";
 import { useGlobalUnread } from "@/hooks/useAgentEvents";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { rpc } from "@/lib/api";
 import { Bot, Plus, Circle, Monitor } from "lucide-react";
+import { ContextMenu, type MenuItem } from "./ContextMenu";
 
 interface SidebarProps {
   agents: AgentInfo[];
@@ -26,6 +29,34 @@ export const ORCHESTRATOR_ID = "__orchestrator__";
 
 export function Sidebar({ agents, selectedAgent, onSelectAgent, onSpawn }: SidebarProps) {
   const unread = useGlobalUnread();
+  const queryClient = useQueryClient();
+
+  const restartSession = useMutation({
+    mutationFn: () => fetch("/api/orchestrator/restart-session", { method: "POST" }).then(r => r.json()),
+  });
+
+  const restartContainer = useMutation({
+    mutationFn: () => fetch("/api/orchestrator/restart-container", { method: "POST" }).then(r => r.json()),
+  });
+
+  const stopAgent = useMutation({
+    mutationFn: (id: string) => rpc.agent.stop({ id }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["agents"] }),
+  });
+
+  const orchestratorMenu: MenuItem[] = [
+    { label: "Restart Claude session", onClick: () => restartSession.mutate() },
+    { label: "Restart container", onClick: () => restartContainer.mutate() },
+    { label: "View config", onClick: () => onSelectAgent(ORCHESTRATOR_ID) },
+  ];
+
+  function agentMenu(id: string): MenuItem[] {
+    return [
+      { label: "Open terminal", onClick: () => onSelectAgent(id) },
+      { label: "View status", onClick: () => onSelectAgent(id) },
+      { label: "Stop agent", onClick: () => stopAgent.mutate(id), danger: true },
+    ];
+  }
   const orchestratorUnread = unread.get(ORCHESTRATOR_ID) || 0;
 
   return (
@@ -47,10 +78,10 @@ export function Sidebar({ agents, selectedAgent, onSelectAgent, onSpawn }: Sideb
 
       <div className="flex-1 overflow-y-auto">
         {/* Orchestrator — always first */}
-        <button
+        <div
           onClick={() => onSelectAgent(ORCHESTRATOR_ID)}
           className={cn(
-            "w-full text-left p-3 border-b border-[var(--border)] hover:bg-[var(--muted)] transition-colors",
+            "w-full text-left p-3 border-b border-[var(--border)] hover:bg-[var(--muted)] transition-colors cursor-pointer",
             selectedAgent === ORCHESTRATOR_ID && "bg-[var(--muted)]"
           )}
         >
@@ -62,11 +93,12 @@ export function Sidebar({ agents, selectedAgent, onSelectAgent, onSpawn }: Sideb
                 {orchestratorUnread}
               </span>
             )}
+            <ContextMenu items={orchestratorMenu} />
           </div>
           <div className="text-xs text-[var(--muted-foreground)] mt-0.5 ml-5">
-            Event stream
+            Claude Code session
           </div>
-        </button>
+        </div>
 
         {/* Agents */}
         {agents.length === 0 ? (
@@ -75,11 +107,11 @@ export function Sidebar({ agents, selectedAgent, onSelectAgent, onSpawn }: Sideb
           </div>
         ) : (
           agents.map((agent) => (
-            <button
+            <div
               key={agent.id}
               onClick={() => onSelectAgent(agent.id)}
               className={cn(
-                "w-full text-left p-3 border-b border-[var(--border)] hover:bg-[var(--muted)] transition-colors",
+                "w-full text-left p-3 border-b border-[var(--border)] hover:bg-[var(--muted)] transition-colors cursor-pointer",
                 selectedAgent === agent.id && "bg-[var(--muted)]"
               )}
             >
@@ -95,6 +127,7 @@ export function Sidebar({ agents, selectedAgent, onSelectAgent, onSpawn }: Sideb
                     {unread.get(agent.id)}
                   </span>
                 )}
+                <ContextMenu items={agentMenu(agent.id)} />
               </div>
               {agent.project && (
                 <div className="text-xs text-[var(--muted-foreground)] mt-1 ml-6">
@@ -104,7 +137,7 @@ export function Sidebar({ agents, selectedAgent, onSelectAgent, onSpawn }: Sideb
               <div className="text-xs text-[var(--muted-foreground)] mt-0.5 ml-6">
                 {agent.status}
               </div>
-            </button>
+            </div>
           ))
         )}
       </div>
