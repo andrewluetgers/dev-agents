@@ -22,7 +22,7 @@ html, body, #root {
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+  font-family: "JetBrains Mono", "Fira Code", "SF Mono", "Consolas", monospace;
   font-size: 13px;
   margin: 0;
 }

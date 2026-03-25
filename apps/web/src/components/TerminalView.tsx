@@ -14,8 +14,8 @@ export function TerminalView() {
       if (cancelled || !containerRef.current) return;
 
       const term = new ghostty.Terminal({
-        fontSize: 13,
-        fontFamily: "'SF Mono', 'Fira Code', 'Consolas', monospace",
+        fontSize: 14,
+        fontFamily: "'JetBrains Mono', 'Fira Code', 'SF Mono', monospace",
       });
 
       term.open(containerRef.current);
