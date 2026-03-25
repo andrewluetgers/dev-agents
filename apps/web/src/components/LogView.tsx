@@ -1,5 +1,45 @@
 import { cn } from "@/lib/utils";
+import Markdown from "react-markdown";
 import { Bot, Terminal, CheckCircle, XCircle, MessageSquare, Wrench, Brain, Info, FileCode, Search, FolderSearch } from "lucide-react";
+
+// Heuristic: does this text look like markdown?
+function looksLikeMarkdown(text: string): boolean {
+  if (text.length < 20) return false;
+  const mdSignals = [
+    /^#{1,6}\s/m,           // headings
+    /^\s*[-*]\s/m,          // unordered lists
+    /^\s*\d+\.\s/m,         // ordered lists
+    /\|.*\|.*\|/m,          // tables
+    /\*\*[^*]+\*\*/,        // bold
+    /```/,                  // code fences
+    /^\s*>\s/m,             // blockquotes
+    /\[.*\]\(http/,         // links
+  ];
+  const matches = mdSignals.filter(r => r.test(text)).length;
+  return matches >= 2;
+}
+
+function MdOrText({ text }: { text: string }) {
+  if (looksLikeMarkdown(text)) {
+    return (
+      <div className="prose prose-invert prose-xs max-w-none
+        prose-headings:text-[var(--foreground)] prose-headings:font-semibold prose-headings:mt-3 prose-headings:mb-1
+        prose-p:my-1 prose-p:text-sm prose-p:leading-relaxed
+        prose-li:my-0 prose-li:text-sm
+        prose-code:text-[var(--accent)] prose-code:bg-[var(--muted)] prose-code:px-1 prose-code:rounded prose-code:text-xs
+        prose-pre:bg-[var(--muted)] prose-pre:border prose-pre:border-[var(--border)] prose-pre:rounded prose-pre:text-xs
+        prose-table:text-xs
+        prose-th:text-left prose-th:px-2 prose-th:py-1 prose-th:border-b prose-th:border-[var(--border)]
+        prose-td:px-2 prose-td:py-1 prose-td:border-b prose-td:border-[var(--border)]
+        prose-a:text-[var(--accent)] prose-a:underline
+        prose-strong:text-[var(--foreground)]
+      ">
+        <Markdown>{text}</Markdown>
+      </div>
+    );
+  }
+  return <span className="whitespace-pre-wrap"><Linkify>{text}</Linkify></span>;
+}
 
 const URL_REGEX = /(https?:\/\/[^\s<>"')\]]+)/g;
 
@@ -192,7 +232,7 @@ function LogLine({ event }: { event: ParsedEvent }) {
         <div className="pl-2 border-l-2 border-[var(--accent)] py-0.5">
           <div className="flex items-start gap-1.5">
             <Bot size={11} className="text-[var(--accent)] mt-0.5 shrink-0" />
-            <span className="whitespace-pre-wrap"><Linkify>{event.text!}</Linkify></span>
+            <MdOrText text={event.text!} />
           </div>
         </div>
       );
@@ -249,7 +289,7 @@ function LogLine({ event }: { event: ParsedEvent }) {
             )}
             <div>
               <span className={event.subtype === "success" ? "text-[var(--success)]" : "text-[var(--error)]"}>
-                <Linkify>{event.result!}</Linkify>
+                <MdOrText text={event.result!} />
               </span>
               {(event.cost || event.turns) && (
                 <span className="text-[var(--muted-foreground)] ml-2">
