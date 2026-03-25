@@ -185,10 +185,10 @@ app.get("/api/terminal", upgradeWebSocket(() => {
   return {
     onOpen(_event, ws) {
       // Attach to the tmux session running Claude
-      // If tmux session died, start a new one
+      // Detach other clients first, then attach
       term = pty.spawn("docker", [
         "exec", "-it", "dev-orchestrator-tty",
-        "bash", "-c", "tmux attach -t orchestrator 2>/dev/null || tmux new-session -s orchestrator claude",
+        "bash", "-c", "tmux detach-client -t orchestrator 2>/dev/null; tmux attach -t orchestrator 2>/dev/null || tmux new-session -s orchestrator claude",
       ], {
         name: "xterm-256color",
         cols: 120,

@@ -1,48 +1,40 @@
 import { useEffect, useRef } from "react";
-import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
-import { WebLinksAddon } from "@xterm/addon-web-links";
-import "@xterm/xterm/css/xterm.css";
 
 export function TerminalView() {
   const containerRef = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    let cancelled = false;
 
-    const term = new Terminal({
-      fontSize: 13,
-      fontFamily: "'SF Mono', 'Fira Code', 'Consolas', monospace",
-      theme: {
-        background: "#0a0a0a",
-        foreground: "#fafafa",
-        cursor: "#fafafa",
-        selectionBackground: "#3b82f644",
-      },
-      cursorBlink: true,
-      allowProposedApi: true,
-    });
+    (async () => {
+      const ghostty = await import("ghostty-web");
+      await ghostty.init();
 
-    const fitAddon = new FitAddon();
-    term.loadAddon(fitAddon);
-    term.loadAddon(new WebLinksAddon());
+      if (cancelled || !containerRef.current) return;
 
-    term.open(containerRef.current);
-    fitAddon.fit();
+      const term = new ghostty.Terminal({
+        fontSize: 13,
+        fontFamily: "'SF Mono', 'Fira Code', 'Consolas', monospace",
+      });
 
-    // WebSocket connection with auto-reconnect
-    let ws: WebSocket | null = null;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+      term.open(containerRef.current);
 
-    function connect() {
+      // FitAddon — auto-size terminal to container
+      const fitAddon = new ghostty.FitAddon();
+      term.loadAddon(fitAddon);
+      fitAddon.fit();
+      fitAddon.observeResize();
+
+      // Connect to the host server's terminal WebSocket
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      ws = new WebSocket(`${protocol}//${window.location.host}/api/terminal`);
+      const ws = new WebSocket(`${protocol}//${window.location.host}/api/terminal`);
 
       ws.onopen = () => {
-        term.write("\x1b[1;34m● Connected\x1b[0m\r\n");
+        term.write("\x1b[1;34m● Connected to orchestrator\x1b[0m\r\n\r\n");
+        // Send initial size to server
         const dims = fitAddon.proposeDimensions();
-        if (dims && ws) {
+        if (dims) {
           ws.send(JSON.stringify({ type: "resize", cols: dims.cols, rows: dims.rows }));
         }
       };
@@ -52,40 +44,31 @@ export function TerminalView() {
       };
 
       ws.onclose = () => {
-        term.write("\r\n\x1b[2m● Reconnecting...\x1b[0m\r\n");
-        reconnectTimer = setTimeout(connect, 2000);
+        term.write("\r\n\x1b[1;31m● Disconnected\x1b[0m\r\n");
       };
 
-      ws.onerror = () => {};
-    }
+      // Send user input to the server
+      term.onData((data: string) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(data);
+        }
+      });
 
-    connect();
+      // Send resize events to server
+      term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "resize", cols, rows }));
+        }
+      });
 
-    // User input → WebSocket
-    term.onData((data) => {
-      if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(data);
-      }
-    });
-
-    // Resize → WebSocket + fit
-    const resizeObserver = new ResizeObserver(() => {
-      fitAddon.fit();
-      const dims = fitAddon.proposeDimensions();
-      if (dims && ws?.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "resize", cols: dims.cols, rows: dims.rows }));
-      }
-    });
-    resizeObserver.observe(containerRef.current);
-
-    cleanupRef.current = () => {
-      resizeObserver.disconnect();
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      ws?.close();
-      term.dispose();
-    };
+      cleanupRef.current = () => {
+        ws.close();
+        term.dispose();
+      };
+    })();
 
     return () => {
+      cancelled = true;
       cleanupRef.current?.();
     };
   }, []);
@@ -94,7 +77,7 @@ export function TerminalView() {
     <div
       ref={containerRef}
       className="absolute inset-0"
-      style={{ background: "#0a0a0a", padding: "4px" }}
+      style={{ background: "#0a0a0a" }}
     />
   );
 }
