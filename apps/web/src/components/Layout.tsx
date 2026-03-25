@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { rpc } from "@/lib/api";
-import { Sidebar } from "./Sidebar";
+import { Sidebar, ORCHESTRATOR_ID } from "./Sidebar";
 import { AgentDetail } from "./AgentDetail";
+import { OrchestratorView } from "./OrchestratorView";
 import { EmptyState } from "./EmptyState";
 import { SpawnDialog } from "./SpawnDialog";
 
@@ -25,7 +26,9 @@ export function Layout() {
       />
       <SpawnDialog open={spawnOpen} onClose={() => setSpawnOpen(false)} />
       <main className="flex-1 overflow-hidden">
-        {selectedAgent ? (
+        {selectedAgent === ORCHESTRATOR_ID ? (
+          <OrchestratorView />
+        ) : selectedAgent ? (
           <AgentDetail agentId={selectedAgent} />
         ) : (
           <EmptyState agentCount={agents.length} />
