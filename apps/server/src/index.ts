@@ -108,12 +108,14 @@ app.get("/api/terminal", upgradeWebSocket(() => {
 
   return {
     onOpen(_event, ws) {
-      const shell = process.env.SHELL || "/bin/zsh";
-      term = pty.spawn(shell, ["-l"], {
+      const orchestratorHome = process.env.ORCHESTRATOR_HOME ||
+        `${process.env.HOME}/dev-agents/orchestrator`;
+      // Start Claude Code as the orchestrator — not a raw shell
+      term = pty.spawn("claude", [], {
         name: "xterm-256color",
         cols: 120,
         rows: 40,
-        cwd: process.env.HOME || "/tmp",
+        cwd: orchestratorHome,
         env: process.env as Record<string, string>,
       });
 
