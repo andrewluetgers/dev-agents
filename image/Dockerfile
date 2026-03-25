@@ -33,6 +33,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/* \
   && update-ca-certificates
 
+# UTF-8 locale — required for Unicode box-drawing in Claude Code TUI
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+
 # Docker CLI — official static binary (the debian docker.io package is too old for Docker Desktop)
 ARG DOCKER_CLI_VERSION=27.5.1
 RUN curl -fsSL "https://download.docker.com/linux/static/stable/$(uname -m)/docker-${DOCKER_CLI_VERSION}.tgz" \

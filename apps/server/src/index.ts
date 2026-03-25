@@ -162,6 +162,8 @@ function ensureOrchestratorContainer() {
     "-e", "HOME=/home/agent",
     "-e", "ORCHESTRATOR_HOME=/home/agent/dev-agents/orchestrator",
     "-e", "CLAUDE_CONFIG_DIR=/home/agent/dev-agents/orchestrator/.claude",
+    "-e", "LANG=C.UTF-8",
+    "-e", "LC_ALL=C.UTF-8",
     "-w", "/home/agent/dev-agents/orchestrator",
     "--memory", "8g",
     "dev-agent:latest",
