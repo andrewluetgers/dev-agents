@@ -1,6 +1,32 @@
 import { cn } from "@/lib/utils";
 import { Bot, Terminal, CheckCircle, XCircle, MessageSquare, Wrench, Brain, Info } from "lucide-react";
 
+const URL_REGEX = /(https?:\/\/[^\s<>"')\]]+)/g;
+
+function Linkify({ children }: { children: string }) {
+  const parts = children.split(URL_REGEX);
+  if (parts.length === 1) return <>{children}</>;
+  return (
+    <>
+      {parts.map((part, i) =>
+        URL_REGEX.test(part) ? (
+          <a
+            key={i}
+            href={part}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[var(--accent)] underline underline-offset-2 hover:opacity-80"
+          >
+            {part}
+          </a>
+        ) : (
+          <span key={i}>{part}</span>
+        )
+      )}
+    </>
+  );
+}
+
 interface LogViewProps {
   log: string;
 }
@@ -112,7 +138,7 @@ function LogLine({ event }: { event: ParsedEvent }) {
         <div className="pl-2 border-l-2 border-[var(--accent)] py-0.5">
           <div className="flex items-start gap-1.5">
             <Bot size={11} className="text-[var(--accent)] mt-0.5 shrink-0" />
-            <span className="whitespace-pre-wrap">{event.text}</span>
+            <span className="whitespace-pre-wrap"><Linkify>{event.text!}</Linkify></span>
           </div>
         </div>
       );
@@ -122,7 +148,7 @@ function LogLine({ event }: { event: ParsedEvent }) {
         <div className="pl-2 border-l-2 border-[var(--muted-foreground)] py-0.5 opacity-60">
           <div className="flex items-start gap-1.5">
             <Brain size={11} className="mt-0.5 shrink-0" />
-            <span className="whitespace-pre-wrap italic">{event.text}</span>
+            <span className="whitespace-pre-wrap italic"><Linkify>{event.text!}</Linkify></span>
           </div>
         </div>
       );
@@ -143,7 +169,7 @@ function LogLine({ event }: { event: ParsedEvent }) {
     case "tool_result":
       return (
         <div className="pl-6 text-[var(--muted-foreground)] py-0.5">
-          <pre className="whitespace-pre-wrap opacity-70">{event.text}</pre>
+          <pre className="whitespace-pre-wrap opacity-70"><Linkify>{event.text!}</Linkify></pre>
         </div>
       );
 
@@ -161,7 +187,7 @@ function LogLine({ event }: { event: ParsedEvent }) {
             )}
             <div>
               <span className={event.subtype === "success" ? "text-[var(--success)]" : "text-[var(--error)]"}>
-                {event.result}
+                <Linkify>{event.result!}</Linkify>
               </span>
               {(event.cost || event.turns) && (
                 <span className="text-[var(--muted-foreground)] ml-2">
@@ -189,7 +215,7 @@ function LogLine({ event }: { event: ParsedEvent }) {
         <div className="pl-2 text-[var(--muted-foreground)] py-0.5 opacity-40">
           <div className="flex items-start gap-1.5">
             <Terminal size={11} className="mt-0.5 shrink-0" />
-            <span>[{event.event}] {event.content}</span>
+            <span>[{event.event}] <Linkify>{event.content!}</Linkify></span>
           </div>
         </div>
       );
