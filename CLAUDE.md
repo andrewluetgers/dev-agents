@@ -23,8 +23,10 @@ These choices were made deliberately. Do NOT replace or swap them without explic
 
 ## Architecture Principles
 
+- **No agentic code on the host** — the host server (apps/server) is a dumb proxy. It MUST NOT execute agentic code, trigger Claude, run LLM-generated commands, or perform any AI-driven actions directly. All agentic work happens inside Docker containers. The server only: serves the dashboard, proxies HTTP/WebSocket, manages Docker containers, and stores configuration. If you find yourself writing code that runs Claude or executes AI-generated commands on the host — stop, that belongs in a container.
 - **Orchestrator runs in a Docker container** — isolated from the host filesystem, only sees `~/dev-agents/`
 - **Agents get their own clones** — never bind-mount the host's working tree
+- **No Docker socket for project agents** — only the orchestrator container gets Docker socket access. Project agents cannot manage containers or escape their sandbox.
 - **Stream-json + MCP** — dual protocol for observability and permission relay
 - **Container is the sandbox** — agents use `--dangerously-skip-permissions` because the container is the boundary
 - **Auth from Keychain** — SSO keys extracted fresh from macOS Keychain at spawn time
