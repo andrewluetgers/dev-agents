@@ -128,7 +128,7 @@ export function AgentDetail({ agentId }: { agentId: string }) {
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4">
         {tab === "status" && (
-          <MarkdownRenderer>
+          <MarkdownRenderer className="prose prose-invert prose-xs max-w-none text-[13px] leading-relaxed">
             {statusData?.markdown || "*No STATUS.md yet — agent hasn't started writing status updates.*"}
           </MarkdownRenderer>
         )}

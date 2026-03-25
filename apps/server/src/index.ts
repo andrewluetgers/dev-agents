@@ -197,9 +197,22 @@ const server = Bun.serve<WsData>({
     },
     message(ws, msg) {
       if (ws.data.type === "terminal" && ws.data.pty) {
+        const data = typeof msg === "string" ? msg : new TextDecoder().decode(msg as ArrayBuffer);
+
+        // Check for resize messages
+        if (data.startsWith("{")) {
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.type === "resize" && parsed.cols && parsed.rows) {
+              // Update COLUMNS/LINES env for the shell
+              // Note: true PTY resize needs node-pty; for now just pass through
+              return;
+            }
+          } catch {}
+        }
+
         // Forward user input to the shell
         const stdin = ws.data.pty.stdin as any;
-        const data = typeof msg === "string" ? msg : new TextDecoder().decode(msg as ArrayBuffer);
         stdin.write(new TextEncoder().encode(data));
         stdin.flush();
       }

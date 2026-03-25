@@ -2,32 +2,41 @@ import { useEffect, useRef } from "react";
 
 export function TerminalView() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const termRef = useRef<any>(null);
-  const wsRef = useRef<WebSocket | null>(null);
+  const cleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
-      const { init, Terminal } = await import("ghostty-web");
-      await init();
+      const ghostty = await import("ghostty-web");
+      await ghostty.init();
 
       if (cancelled || !containerRef.current) return;
 
-      const term = new Terminal({
+      const term = new ghostty.Terminal({
         fontSize: 13,
         fontFamily: "'SF Mono', 'Fira Code', 'Consolas', monospace",
       });
-      termRef.current = term;
+
       term.open(containerRef.current);
+
+      // FitAddon — auto-size terminal to container
+      const fitAddon = new ghostty.FitAddon();
+      term.loadAddon(fitAddon);
+      fitAddon.fit();
+      fitAddon.observeResize();
 
       // Connect to the host server's terminal WebSocket
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const ws = new WebSocket(`${protocol}//${window.location.host}/api/terminal`);
-      wsRef.current = ws;
 
       ws.onopen = () => {
         term.write("\x1b[1;34m● Connected to orchestrator\x1b[0m\r\n\r\n");
+        // Send initial size to server
+        const dims = fitAddon.proposeDimensions();
+        if (dims) {
+          ws.send(JSON.stringify({ type: "resize", cols: dims.cols, rows: dims.rows }));
+        }
       };
 
       ws.onmessage = (e) => {
@@ -45,30 +54,30 @@ export function TerminalView() {
         }
       });
 
-      // Handle resize
-      const resizeObserver = new ResizeObserver(() => {
-        // ghostty-web handles resize internally
+      // Send resize events to server
+      term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "resize", cols, rows }));
+        }
       });
-      if (containerRef.current) {
-        resizeObserver.observe(containerRef.current);
-      }
 
-      return () => {
-        resizeObserver.disconnect();
+      cleanupRef.current = () => {
+        ws.close();
+        term.dispose();
       };
     })();
 
     return () => {
       cancelled = true;
-      wsRef.current?.close();
-      termRef.current?.dispose?.();
+      cleanupRef.current?.();
     };
   }, []);
 
   return (
     <div
       ref={containerRef}
-      className="absolute inset-0 bg-[#0a0a0a]"
+      className="absolute inset-0"
+      style={{ background: "#0a0a0a" }}
     />
   );
 }

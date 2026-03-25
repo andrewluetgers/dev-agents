@@ -11,7 +11,7 @@ interface MarkdownRendererProps {
 
 export function MarkdownRenderer({ children, className }: MarkdownRendererProps) {
   return (
-    <div className={className || "prose prose-invert prose-sm max-w-none prose-styles"}>
+    <div className={className || "prose prose-invert prose-xs max-w-none text-[13px] leading-relaxed"}>
       <Markdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight]}
