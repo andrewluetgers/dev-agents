@@ -8,6 +8,7 @@ import { router, type Context } from "@dev-agents/rpc";
 import type { AgentInfo, AgentEvent } from "@dev-agents/shared";
 import { getLoops, syncLoops } from "./loops.js";
 import { execSync, spawnSync } from "node:child_process";
+import { writeFileSync, existsSync } from "node:fs";
 import * as pty from "@homebridge/node-pty-prebuilt-multiarch";
 
 const PORT = parseInt(process.env.PORT || "8788", 10);
@@ -116,11 +117,9 @@ app.get("/api/ws", upgradeWebSocket(() => ({
 function ensureOrchestratorContainer() {
   const home = process.env.HOME || "/tmp";
   const apiKey = getApiKey();
-  const fs = require("node:fs") as typeof import("node:fs");
-
   // Write MCP config
   const mcpPath = `${home}/dev-agents/orchestrator/.mcp.json`;
-  fs.writeFileSync(mcpPath, JSON.stringify({
+  writeFileSync(mcpPath, JSON.stringify({
     mcpServers: {
       agent: {
         command: "bun",
@@ -135,8 +134,8 @@ function ensureOrchestratorContainer() {
 
   // Pre-seed onboarding
   const claudeJson = `${home}/dev-agents/orchestrator/.claude.json`;
-  if (!fs.existsSync(claudeJson)) {
-    fs.writeFileSync(claudeJson, JSON.stringify({ hasCompletedOnboarding: true }));
+  if (!existsSync(claudeJson)) {
+    writeFileSync(claudeJson, JSON.stringify({ hasCompletedOnboarding: true }));
   }
 
   // Check if already running
