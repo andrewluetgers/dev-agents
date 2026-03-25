@@ -59,10 +59,9 @@ Arguments: `/dev-agent new [project] [task...]`
 
 1. If no project given, read `~/dev-agents/orchestrator/config.json` and use AskUserQuestion to show registered projects
 2. Generate agent name from project + task (e.g. `cs-playwright`, `cs-auth-fix`)
-3. Call `mcp__agent__spawn_agent(name: "<name>", project: "<project>")`
-4. Wait 3 seconds, then call `mcp__agent__dispatch(agent: "<name>", command: "curl -s localhost:9111/health")`
-5. If task was given, call `mcp__agent__message(agent: "<name>", content: "<task>")`
-6. Report: agent name, project, port, task assigned
+3. Call `mcp__agent__spawn_agent(name: "<name>", project: "<project>", task: "<task>")` — pass the task at spawn time so Claude starts immediately
+4. Report: agent name, project, port, task assigned
+5. The agent is now working. Use `/dev-agent status <name>` to check progress.
 
 ### Action: Status
 

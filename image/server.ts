@@ -597,7 +597,9 @@ Bun.serve({
       const from = body.from || "orchestrator";
 
       if (!sessionActive) {
-        return Response.json({ status: "no_claude_session", content });
+        // Auto-start Claude with the message as the initial prompt
+        await startClaude(`[From ${from}]: ${content}`);
+        return Response.json({ status: "started_with_message" });
       }
 
       const sent = await sendMessage(`[From ${from}]: ${content}`);
