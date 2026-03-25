@@ -116,17 +116,15 @@ app.get("/api/ws", upgradeWebSocket(() => ({
 app.get("/api/terminal", upgradeWebSocket(() => {
   let term: pty.IPty | null = null;
 
-  // Kill any stale orchestrator container
-  try { execSync("docker rm -f dev-orchestrator-tty 2>/dev/null"); } catch {}
-
   return {
     onOpen(_event, ws) {
       const home = process.env.HOME || "/tmp";
       const apiKey = getApiKey();
 
       // Write MCP config so Claude inside the container gets the channel
-      // The channel runs inside the same container via bun
-      const mcpConfig = JSON.stringify({
+      const fs = require("node:fs");
+      const mcpPath = `${home}/dev-agents/orchestrator/.mcp.json`;
+      fs.writeFileSync(mcpPath, JSON.stringify({
         mcpServers: {
           agent: {
             command: "bun",
@@ -137,36 +135,55 @@ app.get("/api/terminal", upgradeWebSocket(() => {
             },
           },
         },
-      });
+      }));
 
-      // Write .mcp.json to orchestrator home (persists on host via mount)
-      const fs = require("node:fs");
-      const mcpPath = `${home}/dev-agents/orchestrator/.mcp.json`;
-      fs.writeFileSync(mcpPath, mcpConfig);
-
-      // Also pre-seed onboarding skip
+      // Pre-seed onboarding skip
       const claudeJson = `${home}/dev-agents/orchestrator/.claude.json`;
       if (!fs.existsSync(claudeJson)) {
         fs.writeFileSync(claudeJson, JSON.stringify({ hasCompletedOnboarding: true }));
       }
 
+      // Check if orchestrator container is already running — attach instead of creating
+      let isRunning = false;
+      try {
+        const out = execSync("docker inspect -f '{{.State.Running}}' dev-orchestrator-tty 2>/dev/null", { encoding: "utf8" });
+        isRunning = out.trim() === "true";
+      } catch {}
+
+      if (!isRunning) {
+        // Start the container detached (survives browser tab close)
+        try { execSync("docker rm -f dev-orchestrator-tty 2>/dev/null"); } catch {}
+        execSync([
+          "docker", "run", "-d",
+          "--name", "dev-orchestrator-tty",
+          "-v", `${home}/dev-agents:/home/agent/dev-agents`,
+          "-v", "/var/run/docker.sock:/var/run/docker.sock",
+          "--add-host", "host.docker.internal:host-gateway",
+          "--group-add", "0",
+          "-p", "8789:8788",
+          "-e", `ANTHROPIC_API_KEY=${apiKey}`,
+          "-e", "AGENT_ID=orchestrator",
+          "-e", "HOME=/home/agent",
+          "-e", "ORCHESTRATOR_HOME=/home/agent/dev-agents/orchestrator",
+          "-e", "CLAUDE_CONFIG_DIR=/home/agent/dev-agents/orchestrator/.claude",
+          "-w", "/home/agent/dev-agents/orchestrator",
+          "--memory", "8g",
+          "dev-agent:latest",
+          "sleep", "infinity",
+        ].join(" "));
+
+        // Start Claude inside the running container
+        // Small delay for container to be ready
+        setTimeout(() => {
+          try {
+            execSync("docker exec -d dev-orchestrator-tty bash -c 'claude > /tmp/claude.log 2>&1'");
+          } catch {}
+        }, 1000);
+      }
+
+      // Attach to the container's shell via docker exec -it
       term = pty.spawn("docker", [
-        "run", "-it", "--rm",
-        "--name", "dev-orchestrator-tty",
-        "-v", `${home}/dev-agents:/home/agent/dev-agents`,
-        "-v", "/var/run/docker.sock:/var/run/docker.sock",
-        "--add-host", "host.docker.internal:host-gateway",
-        "--group-add", "0",
-        "-p", "8789:8788",
-        "-e", `ANTHROPIC_API_KEY=${apiKey}`,
-        "-e", "AGENT_ID=orchestrator",
-        "-e", "HOME=/home/agent",
-        "-e", "ORCHESTRATOR_HOME=/home/agent/dev-agents/orchestrator",
-        "-e", "CLAUDE_CONFIG_DIR=/home/agent/dev-agents/orchestrator/.claude",
-        "-w", "/home/agent/dev-agents/orchestrator",
-        "--memory", "8g",
-        "dev-agent:latest",
-        "claude",
+        "exec", "-it", "dev-orchestrator-tty", "bash", "-l",
       ], {
         name: "xterm-256color",
         cols: 120,
@@ -187,7 +204,6 @@ app.get("/api/terminal", upgradeWebSocket(() => {
       if (!term) return;
       const data = typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data as ArrayBuffer);
 
-      // Resize messages
       if (data.startsWith("{")) {
         try {
           const parsed = JSON.parse(data);
@@ -201,12 +217,11 @@ app.get("/api/terminal", upgradeWebSocket(() => {
       term.write(data);
     },
     onClose() {
+      // Just detach — don't kill the container
       if (term) {
         term.kill();
         term = null;
       }
-      // Clean up the container
-      try { execSync("docker rm -f dev-orchestrator-tty 2>/dev/null"); } catch {}
     },
   };
 }));
