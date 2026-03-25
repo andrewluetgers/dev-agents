@@ -106,8 +106,6 @@ export const spawn = proc
       "--name", `dev-${input.name}`,
       "-p", "0:9111", "-p", "0:9222",
       "--add-host", "host.docker.internal:host-gateway",
-      "--group-add", "0",
-      "-v", "/var/run/docker.sock:/var/run/docker.sock",
       "-v", `${process.env.HOME}/dev-agents/${input.name}:/home/agent`,
       "--memory", "8g",
       "-e", `AGENT_ID=${input.name}`,

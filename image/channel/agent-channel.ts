@@ -115,9 +115,7 @@ async function spawnAgent(
     "-p", "0:9111",
     "-p", "0:9222",
     "--add-host", "host.docker.internal:host-gateway",
-    // Docker socket + group for orchestrator-capable agents
-    "--group-add", "0",
-    "-v", "/var/run/docker.sock:/var/run/docker.sock",
+    // No Docker socket for project agents — only the orchestrator gets it
     // Agent's home directory
     "-v", `${homeDir}:/home/agent`,
     // Shared read-only data
