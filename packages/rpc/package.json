@@ -1,22 +1,23 @@
 {
-  "name": "@dev-agents/server",
+  "name": "@dev-agents/rpc",
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
   "scripts": {
-    "dev": "bun --watch src/index.ts",
-    "build": "bun build src/index.ts --outdir dist --target bun",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@dev-agents/shared": "workspace:*",
-    "@dev-agents/rpc": "workspace:*",
     "@orpc/server": "^1.13.6",
-    "hono": "^4.7.0"
+    "@orpc/client": "^1.13.6",
+    "zod": "^4.3.4"
   },
   "devDependencies": {
     "@dev-agents/typescript-config": "workspace:*",
-    "@types/bun": "latest",
     "typescript": "^5.9.0"
   }
 }

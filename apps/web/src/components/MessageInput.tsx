@@ -1,21 +1,20 @@
 import { useState } from "react";
-import { sendMessage } from "@/lib/api";
+import { useMutation } from "@tanstack/react-query";
+import { rpc } from "@/lib/api";
 import { Send } from "lucide-react";
 
 export function MessageInput({ agentId }: { agentId: string }) {
   const [message, setMessage] = useState("");
-  const [sending, setSending] = useState(false);
 
-  const handleSend = async () => {
-    if (!message.trim() || sending) return;
-    setSending(true);
-    try {
-      await sendMessage(agentId, message.trim());
-      setMessage("");
-    } catch (err) {
-      console.error("Failed to send:", err);
-    }
-    setSending(false);
+  const mutation = useMutation({
+    mutationFn: (content: string) => rpc.agent.message({ id: agentId, content }),
+  });
+
+  const handleSend = () => {
+    if (!message.trim() || mutation.isPending) return;
+    mutation.mutate(message.trim(), {
+      onSuccess: () => setMessage(""),
+    });
   };
 
   return (
@@ -30,7 +29,7 @@ export function MessageInput({ agentId }: { agentId: string }) {
       />
       <button
         onClick={handleSend}
-        disabled={sending || !message.trim()}
+        disabled={mutation.isPending || !message.trim()}
         className="px-3 py-1.5 bg-[var(--accent)] text-white rounded text-sm disabled:opacity-50 hover:opacity-90 transition-opacity flex items-center gap-1"
       >
         <Send size={12} />

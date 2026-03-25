@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { fetchAgentHealth, fetchAgentStatus, fetchAgentLog, sendMessage } from "@/lib/api";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { rpc } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { MessageInput } from "./MessageInput";
 import { StreamView } from "./StreamView";
-import { Send, FileText, Radio, ScrollText } from "lucide-react";
+import { FileText, Radio, ScrollText } from "lucide-react";
 
 type Tab = "status" | "stream" | "log";
 
@@ -13,20 +13,20 @@ export function AgentDetail({ agentId }: { agentId: string }) {
 
   const { data: health } = useQuery({
     queryKey: ["agent-health", agentId],
-    queryFn: () => fetchAgentHealth(agentId),
+    queryFn: () => rpc.agent.health({ id: agentId }),
     refetchInterval: 3000,
   });
 
   const { data: statusData } = useQuery({
     queryKey: ["agent-status", agentId],
-    queryFn: () => fetchAgentStatus(agentId),
+    queryFn: () => rpc.agent.status({ id: agentId }),
     refetchInterval: 5000,
     enabled: tab === "status",
   });
 
   const { data: logData } = useQuery({
     queryKey: ["agent-log", agentId],
-    queryFn: () => fetchAgentLog(agentId, 100),
+    queryFn: () => rpc.agent.log({ id: agentId, lines: 100 }),
     refetchInterval: 3000,
     enabled: tab === "log",
   });
@@ -78,12 +78,10 @@ export function AgentDetail({ agentId }: { agentId: string }) {
       <div className="flex-1 overflow-y-auto p-4">
         {tab === "status" && (
           <pre className="whitespace-pre-wrap text-sm leading-relaxed">
-            {statusData?.status || "Loading..."}
+            {statusData?.markdown || "Loading..."}
           </pre>
         )}
-
         {tab === "stream" && <StreamView agentId={agentId} />}
-
         {tab === "log" && (
           <pre className="whitespace-pre-wrap text-xs font-mono leading-relaxed text-[var(--muted-foreground)]">
             {logData?.log || "No log data"}
@@ -91,7 +89,6 @@ export function AgentDetail({ agentId }: { agentId: string }) {
         )}
       </div>
 
-      {/* Message input — always visible */}
       <MessageInput agentId={agentId} />
     </div>
   );
