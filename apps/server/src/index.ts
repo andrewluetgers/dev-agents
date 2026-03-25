@@ -3,7 +3,7 @@ import { cors } from "hono/cors";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
-import { RPCHandler } from "@orpc/server/node";
+import { RPCHandler } from "@orpc/server/fetch";
 import { router, type Context } from "@dev-agents/rpc";
 import type { AgentInfo, AgentEvent } from "@dev-agents/shared";
 import { getLoops, syncLoops } from "./loops.js";
