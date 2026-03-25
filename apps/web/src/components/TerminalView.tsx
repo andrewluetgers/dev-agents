@@ -1,6 +1,13 @@
 import { useEffect, useRef } from "react";
 
-export function TerminalView() {
+interface TerminalViewProps {
+  /** WebSocket endpoint path, e.g. "/api/terminal" or "/api/agents/my-agent/terminal" */
+  endpoint?: string;
+  /** Label shown on connect */
+  label?: string;
+}
+
+export function TerminalView({ endpoint = "/api/terminal", label = "orchestrator" }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
 
@@ -20,19 +27,16 @@ export function TerminalView() {
 
       term.open(containerRef.current);
 
-      // FitAddon — auto-size terminal to container
       const fitAddon = new ghostty.FitAddon();
       term.loadAddon(fitAddon);
       fitAddon.fit();
       fitAddon.observeResize();
 
-      // Connect to the host server's terminal WebSocket
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const ws = new WebSocket(`${protocol}//${window.location.host}/api/terminal`);
+      const ws = new WebSocket(`${protocol}//${window.location.host}${endpoint}`);
 
       ws.onopen = () => {
-        term.write("\x1b[1;34m● Connected to orchestrator\x1b[0m\r\n\r\n");
-        // Send initial size to server
+        term.write(`\x1b[1;34m● Connected to ${label}\x1b[0m\r\n\r\n`);
         const dims = fitAddon.proposeDimensions();
         if (dims) {
           ws.send(JSON.stringify({ type: "resize", cols: dims.cols, rows: dims.rows }));
@@ -47,14 +51,12 @@ export function TerminalView() {
         term.write("\r\n\x1b[1;31m● Disconnected\x1b[0m\r\n");
       };
 
-      // Send user input to the server
       term.onData((data: string) => {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(data);
         }
       });
 
-      // Send resize events to server
       term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "resize", cols, rows }));
@@ -71,7 +73,7 @@ export function TerminalView() {
       cancelled = true;
       cleanupRef.current?.();
     };
-  }, []);
+  }, [endpoint, label]);
 
   return (
     <div

@@ -232,6 +232,59 @@ app.get("/api/terminal", upgradeWebSocket(() => {
   };
 }));
 
+// --- WebSocket: agent terminal (shell inside agent container) ---
+
+app.get("/api/agents/:id/terminal", upgradeWebSocket((c) => {
+  const agentId = c.req.param("id");
+  let term: pty.IPty | null = null;
+
+  return {
+    onOpen(_event, ws) {
+      const containerName = `dev-${agentId}`;
+
+      // Attach to a bash shell inside the agent container
+      term = pty.spawn("docker", [
+        "exec", "-it", containerName, "bash", "-l",
+      ], {
+        name: "xterm-256color",
+        cols: 120,
+        rows: 40,
+        env: process.env as Record<string, string>,
+      });
+
+      term.onData((data) => {
+        try { (ws as any).send(data); } catch {}
+      });
+
+      term.onExit(() => {
+        try { (ws as any).close(); } catch {}
+      });
+    },
+    onMessage(event, ws) {
+      if (!term) return;
+      const data = typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data as ArrayBuffer);
+
+      if (data.startsWith("{")) {
+        try {
+          const parsed = JSON.parse(data);
+          if (parsed.type === "resize" && parsed.cols && parsed.rows) {
+            term.resize(parsed.cols, parsed.rows);
+            return;
+          }
+        } catch {}
+      }
+
+      term.write(data);
+    },
+    onClose() {
+      if (term) {
+        term.kill();
+        term = null;
+      }
+    },
+  };
+}));
+
 // --- SSE proxy for agent streams ---
 
 app.get("/api/agents/:id/stream", async (c) => {

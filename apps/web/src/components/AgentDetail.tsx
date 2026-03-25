@@ -6,11 +6,12 @@ import { MarkdownRenderer } from "./MarkdownRenderer";
 import { MessageInput } from "./MessageInput";
 import { LogView } from "./LogView";
 import { useAgentEvents } from "@/hooks/useAgentEvents";
-import { FileText, ScrollText, GitBranch, RefreshCw, BookOpen } from "lucide-react";
+import { FileText, ScrollText, GitBranch, RefreshCw, BookOpen, Terminal } from "lucide-react";
 import { LoopsView } from "./LoopsView";
 import { ContextView } from "./ContextView";
+import { TerminalView } from "./TerminalView";
 
-type Tab = "status" | "log" | "changes" | "context" | "loops";
+type Tab = "terminal" | "status" | "log" | "changes" | "context" | "loops";
 
 export function AgentDetail({ agentId }: { agentId: string }) {
   const [tab, setTab] = useState<Tab>("log");
@@ -60,6 +61,7 @@ export function AgentDetail({ agentId }: { agentId: string }) {
   const statusChanged = tab !== "status" && statusData?.markdown && statusData.markdown !== "No status";
 
   const tabs: { id: Tab; label: string; icon: typeof FileText; badge?: number | boolean }[] = [
+    { id: "terminal", label: "Terminal", icon: Terminal },
     { id: "status", label: "Status", icon: FileText, badge: statusChanged ? true : false },
     { id: "log", label: "Log", icon: ScrollText, badge: logHasNew ? unreadCount : 0 },
     { id: "changes", label: "Changes", icon: GitBranch },
@@ -129,8 +131,14 @@ export function AgentDetail({ agentId }: { agentId: string }) {
         ))}
       </div>
 
-      {/* Content — context tab gets no padding (has its own sidebar) */}
-      <div className={cn("flex-1 overflow-hidden", tab !== "context" && "overflow-y-auto p-4")}>
+      {/* Content — terminal and context get no padding (own layout) */}
+      <div className={cn("flex-1 overflow-hidden relative", tab !== "context" && tab !== "terminal" && "overflow-y-auto p-4")}>
+        {tab === "terminal" && (
+          <TerminalView
+            endpoint={`/api/agents/${agentId}/terminal`}
+            label={agentId}
+          />
+        )}
         {tab === "status" && (
           <MarkdownRenderer>
             {statusData?.markdown || "*No STATUS.md yet — agent hasn't started writing status updates.*"}
