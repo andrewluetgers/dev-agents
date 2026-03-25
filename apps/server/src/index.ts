@@ -121,11 +121,34 @@ app.get("/api/terminal", upgradeWebSocket(() => {
 
   return {
     onOpen(_event, ws) {
-      // Run the orchestrator in a Docker container — isolated from the host
-      // Mounts: orchestrator home, Docker socket, shared dir
-      // No access to host filesystem beyond these mounts
       const home = process.env.HOME || "/tmp";
       const apiKey = getApiKey();
+
+      // Write MCP config so Claude inside the container gets the channel
+      // The channel runs inside the same container via bun
+      const mcpConfig = JSON.stringify({
+        mcpServers: {
+          agent: {
+            command: "bun",
+            args: ["/opt/agent/agent-channel.ts"],
+            env: {
+              ORCHESTRATOR_HOME: "/home/agent/dev-agents/orchestrator",
+              ANTHROPIC_API_KEY: apiKey,
+            },
+          },
+        },
+      });
+
+      // Write .mcp.json to orchestrator home (persists on host via mount)
+      const fs = require("node:fs");
+      const mcpPath = `${home}/dev-agents/orchestrator/.mcp.json`;
+      fs.writeFileSync(mcpPath, mcpConfig);
+
+      // Also pre-seed onboarding skip
+      const claudeJson = `${home}/dev-agents/orchestrator/.claude.json`;
+      if (!fs.existsSync(claudeJson)) {
+        fs.writeFileSync(claudeJson, JSON.stringify({ hasCompletedOnboarding: true }));
+      }
 
       term = pty.spawn("docker", [
         "run", "-it", "--rm",
@@ -134,10 +157,13 @@ app.get("/api/terminal", upgradeWebSocket(() => {
         "-v", "/var/run/docker.sock:/var/run/docker.sock",
         "--add-host", "host.docker.internal:host-gateway",
         "--group-add", "0",
+        "-p", "8789:8788",
         "-e", `ANTHROPIC_API_KEY=${apiKey}`,
         "-e", "AGENT_ID=orchestrator",
         "-e", "HOME=/home/agent",
         "-e", "ORCHESTRATOR_HOME=/home/agent/dev-agents/orchestrator",
+        "-e", "CLAUDE_CONFIG_DIR=/home/agent/dev-agents/orchestrator/.claude",
+        "-w", "/home/agent/dev-agents/orchestrator",
         "--memory", "8g",
         "dev-agent:latest",
         "claude",
