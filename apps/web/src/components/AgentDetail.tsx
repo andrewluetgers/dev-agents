@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { rpc } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import Markdown from "react-markdown";
+import { MarkdownRenderer } from "./MarkdownRenderer";
 import { MessageInput } from "./MessageInput";
 import { LogView } from "./LogView";
 import { useAgentEvents } from "@/hooks/useAgentEvents";
@@ -128,20 +128,9 @@ export function AgentDetail({ agentId }: { agentId: string }) {
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4">
         {tab === "status" && (
-          <div className="prose prose-invert prose-sm max-w-none
-            prose-headings:text-[var(--foreground)] prose-headings:font-semibold
-            prose-p:my-1 prose-p:leading-relaxed
-            prose-li:my-0
-            prose-code:text-[var(--accent)] prose-code:bg-[var(--muted)] prose-code:px-1 prose-code:rounded prose-code:text-xs
-            prose-pre:bg-[var(--muted)] prose-pre:border prose-pre:border-[var(--border)] prose-pre:rounded
-            prose-table:text-xs
-            prose-th:text-left prose-th:px-2 prose-th:py-1 prose-th:border-b prose-th:border-[var(--border)]
-            prose-td:px-2 prose-td:py-1 prose-td:border-b prose-td:border-[var(--border)]
-            prose-a:text-[var(--accent)] prose-a:underline
-            prose-strong:text-[var(--foreground)]
-          ">
-            <Markdown>{statusData?.markdown || "*No STATUS.md yet — agent hasn't started writing status updates.*"}</Markdown>
-          </div>
+          <MarkdownRenderer>
+            {statusData?.markdown || "*No STATUS.md yet — agent hasn't started writing status updates.*"}
+          </MarkdownRenderer>
         )}
         {tab === "log" && <LogView log={logData?.log || ""} />}
         {tab === "changes" && (

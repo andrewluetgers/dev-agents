@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import Markdown from "react-markdown";
+import { MarkdownRenderer } from "./MarkdownRenderer";
 import { Bot, Terminal, CheckCircle, XCircle, MessageSquare, Wrench, Brain, Info, FileCode, Search, FolderSearch } from "lucide-react";
 
 // Heuristic: does this text look like markdown?
@@ -21,22 +21,7 @@ function looksLikeMarkdown(text: string): boolean {
 
 function MdOrText({ text }: { text: string }) {
   if (looksLikeMarkdown(text)) {
-    return (
-      <div className="prose prose-invert prose-xs max-w-none
-        prose-headings:text-[var(--foreground)] prose-headings:font-semibold prose-headings:mt-3 prose-headings:mb-1
-        prose-p:my-1 prose-p:text-sm prose-p:leading-relaxed
-        prose-li:my-0 prose-li:text-sm
-        prose-code:text-[var(--accent)] prose-code:bg-[var(--muted)] prose-code:px-1 prose-code:rounded prose-code:text-xs
-        prose-pre:bg-[var(--muted)] prose-pre:border prose-pre:border-[var(--border)] prose-pre:rounded prose-pre:text-xs
-        prose-table:text-xs
-        prose-th:text-left prose-th:px-2 prose-th:py-1 prose-th:border-b prose-th:border-[var(--border)]
-        prose-td:px-2 prose-td:py-1 prose-td:border-b prose-td:border-[var(--border)]
-        prose-a:text-[var(--accent)] prose-a:underline
-        prose-strong:text-[var(--foreground)]
-      ">
-        <Markdown>{text}</Markdown>
-      </div>
-    );
+    return <MarkdownRenderer className="prose prose-invert prose-xs max-w-none">{text}</MarkdownRenderer>;
   }
   return <span className="whitespace-pre-wrap"><Linkify>{text}</Linkify></span>;
 }
