@@ -187,6 +187,7 @@ function ensureOrchestratorContainer() {
     "-e", "CLAUDE_CONFIG_DIR=/home/agent/dev-agents/orchestrator/.claude",
     "-e", "LANG=C.UTF-8",
     "-e", "LC_ALL=C.UTF-8",
+    "-e", "CLAUDE_CODE_DISABLE_AUTO_UPDATE=1",
     "-w", "/home/agent/dev-agents/orchestrator",
     "--memory", "8g",
     "dev-agent:latest",

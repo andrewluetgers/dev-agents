@@ -53,6 +53,7 @@ RUN npm install -g pnpm@${PNPM_VERSION}
 
 # Claude Code — so agents can run claude sessions autonomously
 RUN npm install -g @anthropic-ai/claude-code
+ENV CLAUDE_CODE_DISABLE_AUTO_UPDATE=1
 
 # Playwright MCP — browser automation for agents (accessibility-tree based, not screenshots)
 # Install Playwright + Chromium with system dependencies
