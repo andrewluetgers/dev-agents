@@ -25,7 +25,7 @@ export function Layout() {
         onSpawn={() => setSpawnOpen(true)}
       />
       <SpawnDialog open={spawnOpen} onClose={() => setSpawnOpen(false)} />
-      <main className="flex-1 overflow-hidden">
+      <main className="flex-1 overflow-hidden" key={selectedAgent || "empty"}>
         {selectedAgent === ORCHESTRATOR_ID ? (
           <OrchestratorView />
         ) : selectedAgent ? (

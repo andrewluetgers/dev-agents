@@ -36,7 +36,7 @@ export function TerminalView({ endpoint = "/api/terminal", label = "orchestrator
       const ws = new WebSocket(`${protocol}//${window.location.host}${endpoint}`);
 
       ws.onopen = () => {
-        term.write(`\x1b[1;34m● Connected to ${label}\x1b[0m\r\n\r\n`);
+        // Send initial size — don't write a "connected" message, it overlaps with real content
         const dims = fitAddon.proposeDimensions();
         if (dims) {
           ws.send(JSON.stringify({ type: "resize", cols: dims.cols, rows: dims.rows }));
@@ -48,7 +48,7 @@ export function TerminalView({ endpoint = "/api/terminal", label = "orchestrator
       };
 
       ws.onclose = () => {
-        term.write("\r\n\x1b[1;31m● Disconnected\x1b[0m\r\n");
+        term.write("\r\n\x1b[2m[session ended]\x1b[0m\r\n");
       };
 
       term.onData((data: string) => {
