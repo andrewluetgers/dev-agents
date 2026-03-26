@@ -135,6 +135,7 @@ export function AgentDetail({ agentId }: { agentId: string }) {
       <div className={cn("flex-1 overflow-hidden relative", tab !== "context" && tab !== "terminal" && "overflow-y-auto p-4")}>
         {tab === "terminal" && (
           <TerminalView
+            key={`term-${agentId}`}
             endpoint={`/api/agents/${agentId}/terminal`}
             label={agentId}
           />

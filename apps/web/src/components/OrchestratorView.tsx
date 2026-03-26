@@ -45,7 +45,7 @@ export function OrchestratorView() {
 
       {/* Content */}
       <div className="flex-1 overflow-hidden relative">
-        {tab === "terminal" && <TerminalView />}
+        {tab === "terminal" && <TerminalView key="orchestrator-term" />}
         {tab === "events" && <EventStreamView />}
       </div>
     </div>
