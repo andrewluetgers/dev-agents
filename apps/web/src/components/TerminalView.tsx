@@ -20,6 +20,9 @@ export function TerminalView({ endpoint = "/api/terminal", label = "orchestrator
 
       if (cancelled || !containerRef.current) return;
 
+      // Clear any leftover canvas elements from previous terminals
+      containerRef.current.innerHTML = "";
+
       const term = new ghostty.Terminal({
         fontSize: 14,
         fontFamily: "'JetBrains Mono', 'Fira Code', 'SF Mono', monospace",
@@ -72,14 +75,18 @@ export function TerminalView({ endpoint = "/api/terminal", label = "orchestrator
     return () => {
       cancelled = true;
       cleanupRef.current?.();
+      // Force clear the container
+      if (containerRef.current) {
+        containerRef.current.innerHTML = "";
+      }
     };
   }, [endpoint, label]);
 
   return (
     <div
       ref={containerRef}
-      className="absolute inset-0"
-      style={{ background: "#0a0a0a" }}
+      className="absolute inset-0 z-10"
+      style={{ background: "#0a0a0a", isolation: "isolate" }}
     />
   );
 }
