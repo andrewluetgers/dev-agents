@@ -266,8 +266,10 @@ app.get("/api/agents/:id/terminal", upgradeWebSocket((c) => {
       const containerName = `dev-${agentId}`;
 
       // Attach to a bash shell inside the agent container
+      // Use bash -c 'clear && exec bash' to start with a clean screen
       term = pty.spawn("docker", [
-        "exec", "-it", containerName, "bash", "-l",
+        "exec", "-it", containerName,
+        "bash", "-c", "clear && exec bash -l",
       ], {
         name: "xterm-256color",
         cols: 120,
