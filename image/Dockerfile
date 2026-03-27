@@ -55,15 +55,18 @@ RUN npm install -g pnpm@${PNPM_VERSION}
 RUN npm install -g @anthropic-ai/claude-code
 ENV CLAUDE_CODE_DISABLE_AUTO_UPDATE=1
 
-# Playwright MCP — browser automation for agents (accessibility-tree based, not screenshots)
-# Install Playwright + Chromium with system dependencies
-RUN npx playwright install --with-deps chromium
-
 # Non-root user — UID should match host user for bind mount permissions
 ARG AGENT_UID=1000
 RUN useradd -m -s /bin/bash -u ${AGENT_UID} agent \
   && echo "agent ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers \
   && usermod -aG docker agent 2>/dev/null || true
+
+# Playwright MCP — browser automation for agents
+# Install system deps as root, then browser as agent user
+RUN npx playwright install-deps chromium
+USER agent
+RUN npx playwright install chromium
+USER root
 
 # Agent infrastructure — server + channel + shared deps in one directory
 COPY server.ts /opt/agent/server.ts
